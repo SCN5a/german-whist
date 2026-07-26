@@ -432,6 +432,9 @@
   let myName = "";
   let link = null;            // transport handle
   let connected = false;
+  let everConnected = false;  // this session reached the other phone at least once
+  let linkEpoch = 0;          // bumped on every deliberate link change; stale timers self-cancel
+  let awaitingView = false;   // a play was sent; ignore further card taps until the next view
 
   // host-only authoritative state
   let game = null;
@@ -488,7 +491,8 @@
     });
     peer.on("error", (e) => {
       if (e.type === "unavailable-id") cb.onFatal("Codice già in uso: creane un altro.");
-      else if (e.type === "network" || e.type === "disconnected") cb.onDown();
+      else if (e.type === "network" || e.type === "disconnected") { try { peer.reconnect(); } catch (err) {} }
+      else if (peer.destroyed) cb.onLinkDead();   // socket-error, server-error, ssl-unavailable, …
     });
     peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
     return {
@@ -509,7 +513,8 @@
     });
     peer.on("error", (e) => {
       if (e.type === "peer-unavailable") cb.onFatal("Stanza non trovata. Controlla il codice.");
-      else if (e.type === "network" || e.type === "disconnected") cb.onDown();
+      else if (e.type === "network" || e.type === "disconnected") { try { peer.reconnect(); } catch (err) {} }
+      else cb.onDown();   // anything else: let the retry loop rebuild the peer
     });
     peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
     return {
@@ -524,6 +529,9 @@
     const me = role;
     const ch = new BroadcastChannel("gw-room-" + room);
     let up = false;
+    let closed = false;
+    const sayBye = () => { try { ch.postMessage({ from: me, ctl: "bye" }); } catch (e) {} };
+    window.addEventListener("beforeunload", sayBye);
     ch.onmessage = (ev) => {
       const env = ev.data;
       if (!env || env.from === me) return;
@@ -536,6 +544,11 @@
         if (!up) { up = true; cb.onUp(); }
         return;
       }
+      if (env.ctl === "bye") {
+        up = false;
+        cb.onDown();
+        return;
+      }
       if (env.data !== undefined) {
         if (globalThis.__received) globalThis.__received.push(env.data);
         cb.onMsg(env.data);
@@ -543,14 +556,20 @@
     };
     if (me === "guest") {
       const tryHello = setInterval(() => {
-        if (up) { clearInterval(tryHello); return; }
+        if (closed || up) { clearInterval(tryHello); return; }
         ch.postMessage({ from: me, ctl: "hello" });
       }, 150);
       ch.postMessage({ from: me, ctl: "hello" });
     }
     return {
-      send: (obj) => ch.postMessage({ from: me, data: obj }),
-      close: () => ch.close(),
+      send: (obj) => { if (!closed) { try { ch.postMessage({ from: me, data: obj }); } catch (e) {} } },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        window.removeEventListener("beforeunload", sayBye);
+        sayBye();
+        ch.close();
+      },
     };
   }
 
@@ -618,6 +637,8 @@
     if (msg.t === "play") {
       if (!game || game.winner) return;
       if (game.turn !== "B") return;
+      // stale message from a previous trick (double-tap race): resync instead
+      if (msg.trick !== game.trickNum) { broadcast(); return; }
       if (!GW.legalCards(game, "B").includes(msg.card)) { broadcast(); return; }
       GW.playCard(game, "B", msg.card);
       broadcast();
@@ -677,6 +698,7 @@
   function acceptView(v) {
     view = v;
     selected = null;
+    awaitingView = false;
     lastViewAt = Date.now();
 
     if (!v.lastTrick) overlayShownFor = 0;   // a new game started (rematch)
@@ -804,6 +826,7 @@
   }
 
   function selectCard(card) {
+    if (awaitingView) return;
     selected = card;
     document.querySelectorAll("#hand .card").forEach((el) => {
       el.classList.toggle("selected", el.dataset.card === card);
@@ -814,17 +837,23 @@
   }
 
   function confirmPlay() {
-    if (!selected || !view) return;
+    if (!selected || !view || awaitingView) return;
     const card = selected;
+    const trickNum = view.trickNum;
     selected = null;
+    awaitingView = true;
     $("btn-play").disabled = true;
     if (role === "host") {
       if (game && game.turn === "A" && GW.legalCards(game, "A").includes(card)) {
         GW.playCard(game, "A", card);
         broadcast();
+      } else {
+        awaitingView = false;
       }
     } else {
-      link.send({ t: "play", card });
+      link.send({ t: "play", card, trick: trickNum });
+      // safety valve: if the confirming view never arrives, unfreeze the hand
+      setTimeout(() => { awaitingView = false; }, 5000);
     }
   }
 
@@ -881,6 +910,8 @@
     return {
       onUp: () => {
         connected = true;
+        everConnected = true;
+        stopRetry();
         setConnPill();
         if (role === "guest") {
           link.send({ t: "join", name: myName });
@@ -894,9 +925,30 @@
         setConnPill();
         if (role === "guest") scheduleGuestRetry();
       },
-      onFatal: (txt) => {
+      /* The signaling peer was destroyed (broker unreachable, socket error).
+         Rebuild the link after a pause instead of dying silently. */
+      onLinkDead: () => {
         connected = false;
+        setConnPill();
+        const epoch = linkEpoch;
+        setTimeout(() => {
+          if (epoch !== linkEpoch) return;
+          try { link.close(); } catch (e) {}
+          link = startLink(linkCallbacks());
+        }, 4000);
+      },
+      onFatal: (txt) => {
+        stopRetry();
+        connected = false;
+        // mid-game, "room not found" usually means the host is reloading:
+        // keep retrying instead of dumping the guest to the home screen
+        if (role === "guest" && everConnected) {
+          setConnPill();
+          scheduleGuestRetry();
+          return;
+        }
         try { link.close(); } catch (e) {}
+        linkEpoch++;
         $("home-error").textContent = txt;
         show("screen-home");
       },
@@ -904,10 +956,15 @@
   }
 
   let retryTimer = null;
+  function stopRetry() {
+    if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+  }
   function scheduleGuestRetry() {
     if (retryTimer) return;
+    const epoch = linkEpoch;
     retryTimer = setInterval(() => {
-      if (connected) { clearInterval(retryTimer); retryTimer = null; return; }
+      if (epoch !== linkEpoch || role !== "guest") { stopRetry(); return; }
+      if (connected) { stopRetry(); return; }
       try { link.close(); } catch (e) {}
       link = startLink(linkCallbacks());
     }, 4000);
@@ -930,6 +987,10 @@
 
   function beginHost(resumed) {
     role = "host";
+    linkEpoch++;
+    stopRetry();
+    everConnected = false;
+    awaitingView = false;
     saveHost();
     link = startLink(linkCallbacks());
     $("wait-eyebrow").textContent = "Codice stanza";
@@ -950,6 +1011,10 @@
 
   function beginGuest() {
     role = "guest";
+    linkEpoch++;
+    stopRetry();
+    everConnected = false;
+    awaitingView = false;
     saveGuest();
     link = startLink(linkCallbacks());
     $("wait-eyebrow").textContent = "Stanza " + room;
@@ -984,8 +1049,10 @@
 
   $("btn-wait-back").addEventListener("click", () => {
     try { link && link.close(); } catch (e) {}
+    link = null;
     connected = false;
-    if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+    linkEpoch++;
+    stopRetry();
     show("screen-home");
   });
 
@@ -1008,10 +1075,11 @@
 
   if (urlRoom.length === 4) $("join-code").value = urlRoom;
 
-  if (savedHost && savedHost.room && savedHost.game && !savedHost.game.winner) {
+  if (savedHost && savedHost.room && savedHost.game) {
     const b = $("btn-resume-online");
     b.hidden = false;
-    b.textContent = "Riapri la stanza " + savedHost.room + " (presa " + savedHost.game.trickNum + ")";
+    b.textContent = "Riapri la stanza " + savedHost.room +
+      (savedHost.game.winner ? " (partita finita)" : " (presa " + savedHost.game.trickNum + ")");
     b.onclick = () => {
       room = savedHost.room;
       myName = savedHost.myName || "";
