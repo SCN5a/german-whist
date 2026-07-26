@@ -1,0 +1,910 @@
+<title>German Whist</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<style>
+  :root {
+    --felt-950: #081b16;
+    --felt-900: #0c241e;
+    --felt-800: #123028;
+    --felt-700: #1a4034;
+    --line: rgba(246, 241, 227, 0.10);
+    --ivory: #f6f1e3;
+    --ivory-dim: #e9e0c9;
+    --ink: #20211f;
+    --suit-red: #b3372c;
+    --brass: #d5a44c;
+    --brass-soft: rgba(213, 164, 76, 0.16);
+    --text: #e8e2d0;
+    --muted: #93ac9f;
+    --shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    --radius: 10px;
+    --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    background:
+      radial-gradient(ellipse 120% 80% at 50% -10%, var(--felt-700), transparent 60%),
+      linear-gradient(180deg, var(--felt-800), var(--felt-900) 55%, var(--felt-950));
+    background-attachment: fixed;
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .screen { display: none; flex: 1; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ---------- shared bits ---------- */
+
+  h1.brand {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 2.4rem;
+    letter-spacing: 0.02em;
+    color: var(--ivory);
+    text-wrap: balance;
+  }
+  .brand .suits { color: var(--brass); font-size: 1.4rem; letter-spacing: 0.25em; display: block; margin-top: 6px; }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+  }
+
+  button {
+    font-family: var(--sans);
+    border: none;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .btn {
+    width: 100%;
+    padding: 15px 20px;
+    border-radius: var(--radius);
+    font-size: 1.05rem;
+    font-weight: 600;
+    background: var(--brass);
+    color: var(--felt-950);
+    box-shadow: var(--shadow);
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  .btn:active { transform: scale(0.985); }
+  .btn:disabled { opacity: 0.35; pointer-events: none; box-shadow: none; }
+
+  .btn-quiet {
+    width: 100%;
+    padding: 13px 20px;
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    font-weight: 500;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+
+  .btn:focus-visible, .btn-quiet:focus-visible, .card:focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+
+  /* ---------- cards ---------- */
+
+  .card {
+    width: 62px;
+    height: 88px;
+    border-radius: 7px;
+    background: linear-gradient(160deg, var(--ivory), var(--ivory-dim));
+    color: var(--ink);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 6px 7px;
+    font-family: var(--serif);
+    flex-shrink: 0;
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .card .corner { font-size: 1rem; line-height: 1.05; font-weight: 600; }
+  .card .corner.bottom { align-self: flex-end; transform: rotate(180deg); }
+  .card .pip { position: absolute; inset: 0; display: grid; place-items: center; font-size: 1.7rem; opacity: 0.85; }
+  .card.red { color: var(--suit-red); }
+
+  .card.back {
+    background:
+      repeating-linear-gradient(45deg, var(--felt-700) 0 5px, var(--felt-800) 5px 10px);
+    border: 1px solid var(--brass-soft);
+    box-shadow: inset 0 0 0 3px rgba(213, 164, 76, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  .card.big { width: 76px; height: 108px; }
+  .card.big .corner { font-size: 1.2rem; }
+  .card.big .pip { font-size: 2.2rem; }
+
+  /* ---------- status bar ---------- */
+
+  .status {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 0 12px;
+  }
+  .status .cell {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    text-align: center;
+  }
+  .status .cell .eyebrow { font-size: 0.6rem; display: block; margin-bottom: 2px; }
+  .status .cell .val {
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    color: var(--ivory);
+    font-variant-numeric: tabular-nums;
+  }
+  .status .val .red { color: #e0705f; }
+  .status .val .brassy { color: var(--brass); }
+
+  .phase-note {
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    padding-bottom: 8px;
+  }
+
+  /* ---------- table ---------- */
+
+  .table {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 8px 0;
+    min-height: 180px;
+  }
+  .table .slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .table .slot .eyebrow { font-size: 0.62rem; }
+  .table-row { display: flex; gap: 22px; align-items: flex-end; }
+
+  .stake-wrap { display: flex; gap: 10px; align-items: center; }
+
+  .note {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-align: center;
+    max-width: 34ch;
+  }
+  .note strong { color: var(--brass); font-weight: 600; }
+
+  /* ---------- hand ---------- */
+
+  .hand-area { padding-top: 6px; }
+  .hand-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0 2px 8px;
+  }
+  .hand {
+    display: flex;
+    overflow-x: auto;
+    padding: 14px 8px 6px;
+    scrollbar-width: none;
+  }
+  .hand::-webkit-scrollbar { display: none; }
+  .hand .card {
+    margin-left: -22px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .hand .card:first-child { margin-left: 0; }
+  .hand .card.selected {
+    transform: translateY(-14px);
+    box-shadow: 0 0 0 2px var(--brass), 0 8px 18px rgba(0, 0, 0, 0.5);
+    z-index: 2;
+  }
+  .hand .card.illegal { filter: brightness(0.5) saturate(0.6); }
+  .hand .card.drawn::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: 7px;
+    box-shadow: inset 0 0 0 2px var(--brass);
+    pointer-events: none;
+  }
+
+  .play-cta { padding-top: 12px; min-height: 66px; }
+  .hint { text-align: center; font-size: 0.8rem; color: var(--muted); padding-top: 8px; min-height: 1.2em; }
+
+  /* ---------- setup ---------- */
+
+  #screen-setup { justify-content: center; gap: 26px; text-align: center; }
+  .setup-fields { display: flex; flex-direction: column; gap: 12px; text-align: left; }
+  .setup-fields label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 5px; }
+  .setup-fields input {
+    width: 100%;
+    padding: 13px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--ivory);
+    font-size: 1rem;
+    font-family: var(--sans);
+  }
+  .setup-fields input:focus-visible { outline: 2px solid var(--brass); outline-offset: 0; }
+
+  details.rules {
+    text-align: left;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(0, 0, 0, 0.18);
+  }
+  details.rules summary {
+    padding: 13px 14px;
+    cursor: pointer;
+    font-size: 0.92rem;
+    color: var(--ivory);
+    list-style: none;
+  }
+  details.rules summary::before { content: "❦ "; color: var(--brass); }
+  details.rules .rules-body {
+    padding: 0 14px 14px;
+    font-size: 0.87rem;
+    line-height: 1.55;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* ---------- pass ---------- */
+
+  #screen-pass { justify-content: center; align-items: center; gap: 22px; text-align: center; }
+  .pass-name {
+    font-family: var(--serif);
+    font-size: 2.1rem;
+    color: var(--ivory);
+    text-wrap: balance;
+  }
+  .pass-glyph { font-size: 2.2rem; color: var(--brass); }
+
+  /* ---------- trick result ---------- */
+
+  #screen-trick { justify-content: center; align-items: center; gap: 20px; text-align: center; }
+  .trick-cards { display: flex; gap: 26px; }
+  .trick-cards .slot .eyebrow { margin-top: 8px; display: block; }
+  .trick-cards .slot.winner .card { box-shadow: 0 0 0 2px var(--brass), var(--shadow); }
+  .trick-verdict {
+    font-family: var(--serif);
+    font-size: 1.5rem;
+    color: var(--ivory);
+    text-wrap: balance;
+  }
+
+  /* ---------- game over ---------- */
+
+  #screen-over { justify-content: center; align-items: center; gap: 18px; text-align: center; }
+  .final-score {
+    font-family: var(--serif);
+    font-size: 3.4rem;
+    color: var(--ivory);
+    font-variant-numeric: tabular-nums;
+  }
+  .match-tally { font-size: 0.9rem; color: var(--muted); }
+  .over-actions { width: 100%; display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<script id="game-logic">
+"use strict";
+/* German Whist — pure game logic, no DOM. Exposed as globalThis.GW so the
+   same block runs under Node for the test suite. */
+globalThis.GW = (() => {
+  const SUITS = ["S", "H", "D", "C"];
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const suitOf = (c) => c[0];
+  const rankOf = (c) => parseInt(c.slice(1), 10);
+  const other = (p) => (p === "A" ? "B" : "A");
+
+  function newDeck() {
+    const d = [];
+    for (const s of SUITS) for (let r = 2; r <= 14; r++) d.push(s + r);
+    return d;
+  }
+
+  function shuffled(deck, rand) {
+    const d = deck.slice();
+    for (let i = d.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [d[i], d[j]] = [d[j], d[i]];
+    }
+    return d;
+  }
+
+  function newGame(seed, firstLeader) {
+    const rand = mulberry32(seed);
+    const deck = shuffled(newDeck(), rand);
+    const leader = firstLeader === "B" ? "B" : "A";
+    return {
+      seed,
+      trump: suitOf(deck[26]),
+      hands: { A: deck.slice(0, 13), B: deck.slice(13, 26) },
+      stock: deck.slice(26),      // stock[0] is the face-up card
+      leader,
+      turn: leader,
+      trick: { A: null, B: null },
+      trickNum: 1,                // 1..26
+      taken: { p1: { A: 0, B: 0 }, p2: { A: 0, B: 0 } },
+      lastTrick: null,
+      justDrawn: { A: null, B: null },
+      winner: null,
+    };
+  }
+
+  const upcard = (s) => (s.stock.length > 0 ? s.stock[0] : null);
+  const phase = (s) => (s.stock.length > 0 ? 1 : 2);
+
+  function legalCards(state, player) {
+    if (state.winner || state.turn !== player) return [];
+    const hand = state.hands[player];
+    if (player === state.leader) return hand.slice();
+    const leadCard = state.trick[state.leader];
+    if (leadCard === null) return [];
+    const follow = hand.filter((c) => suitOf(c) === suitOf(leadCard));
+    return follow.length ? follow : hand.slice();
+  }
+
+  function trickWinner(leader, leadCard, followCard, trump) {
+    const follower = other(leader);
+    const ls = suitOf(leadCard);
+    const fs = suitOf(followCard);
+    if (ls === fs) return rankOf(followCard) > rankOf(leadCard) ? follower : leader;
+    if (fs === trump) return follower;
+    return leader;
+  }
+
+  /* Mutates state. Returns {resolved:false} after the lead card, or
+     {resolved:true, trick} once both cards are down and the trick settled. */
+  function playCard(state, player, card) {
+    if (state.winner) throw new Error("game over");
+    if (state.turn !== player) throw new Error("not this player's turn");
+    if (!legalCards(state, player).includes(card)) throw new Error("illegal card: " + card);
+
+    state.hands[player] = state.hands[player].filter((c) => c !== card);
+    state.trick[player] = card;
+
+    const opp = other(player);
+    if (state.trick[opp] === null) {
+      state.turn = opp;
+      return { resolved: false };
+    }
+
+    const leadCard = state.trick[state.leader];
+    const followCard = state.trick[other(state.leader)];
+    const w = trickWinner(state.leader, leadCard, followCard, state.trump);
+    const l = other(w);
+    const ph = phase(state);
+    state.taken[ph === 1 ? "p1" : "p2"][w]++;
+
+    let drawnUp = null;
+    state.justDrawn = { A: null, B: null };
+    if (ph === 1) {
+      drawnUp = state.stock.shift();
+      state.hands[w].push(drawnUp);
+      const hidden = state.stock.shift();
+      state.hands[l].push(hidden);
+      state.justDrawn[w] = drawnUp;
+      state.justDrawn[l] = hidden;
+    }
+
+    state.lastTrick = {
+      num: state.trickNum,
+      phase: ph,
+      leader: state.leader,
+      cards: { A: state.trick.A, B: state.trick.B },
+      winner: w,
+      drawnUp,
+    };
+    state.trick = { A: null, B: null };
+    state.trickNum++;
+    state.leader = w;
+    state.turn = w;
+
+    if (state.hands.A.length === 0 && state.hands.B.length === 0) {
+      state.winner = state.taken.p2.A > state.taken.p2.B ? "A" : "B";
+      state.turn = null;
+    }
+    return { resolved: true, trick: state.lastTrick };
+  }
+
+  /* Trump suit first, then the remaining suits in a fixed order; ranks high→low. */
+  function sortHand(hand, trump) {
+    const order = [trump, ...["S", "H", "C", "D"].filter((s) => s !== trump)];
+    return hand.slice().sort((a, b) => {
+      const sa = order.indexOf(suitOf(a));
+      const sb = order.indexOf(suitOf(b));
+      if (sa !== sb) return sa - sb;
+      return rankOf(b) - rankOf(a);
+    });
+  }
+
+  return {
+    SUITS, mulberry32, suitOf, rankOf, other,
+    newDeck, newGame, upcard, phase,
+    legalCards, trickWinner, playCard, sortHand,
+  };
+})();
+</script>
+
+<main id="app">
+
+  <!-- ============ SETUP ============ -->
+  <section class="screen" id="screen-setup">
+    <div>
+      <h1 class="brand">German Whist<span class="suits">♠ ♥ ♦ ♣</span></h1>
+    </div>
+
+    <div class="setup-fields">
+      <div>
+        <label for="name-a">Chi gioca per primo</label>
+        <input id="name-a" type="text" maxlength="14" placeholder="Giocatore 1" autocomplete="off">
+      </div>
+      <div>
+        <label for="name-b">L'altra metà del tavolo</label>
+        <input id="name-b" type="text" maxlength="14" placeholder="Giocatore 2" autocomplete="off">
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn" id="btn-start">Mescola e distribuisci</button>
+      <button class="btn-quiet" id="btn-resume" hidden>Riprendi la partita</button>
+    </div>
+
+    <details class="rules">
+      <summary>Come si gioca</summary>
+      <div class="rules-body">
+        <p>Si gioca in due con un mazzo da 52 carte, Asso alto. Ognuno riceve 13 carte; le altre 26 formano il tallone. La prima carta del tallone resta scoperta: il suo seme è <strong style="color:var(--brass)">briscola</strong> per tutta la partita.</p>
+        <p><strong>Fase 1 — costruisci la mano.</strong> A ogni presa è in palio la carta scoperta: chi vince la presa la prende, chi perde pesca la carta coperta successiva. Queste 13 prese non danno punti: servono a costruirsi una buona mano.</p>
+        <p><strong>Fase 2 — si fa sul serio.</strong> Esaurito il tallone, si giocano le ultime 13 carte: ogni presa vale un punto. Vince chi ne fa almeno 7.</p>
+        <p>Bisogna sempre rispondere al seme se si può; altrimenti si può giocare qualsiasi carta, briscola compresa. La presa va alla briscola più alta, o alla carta più alta del seme di uscita. Chi vince la presa gioca per primo la successiva.</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- ============ PASS THE PHONE ============ -->
+  <section class="screen" id="screen-pass">
+    <div class="pass-glyph">❧</div>
+    <div>
+      <p class="eyebrow">Passa il telefono a</p>
+      <p class="pass-name" id="pass-name"></p>
+    </div>
+    <p class="note" id="pass-note"></p>
+    <button class="btn" id="btn-reveal">Sono io — mostra le mie carte</button>
+  </section>
+
+  <!-- ============ PLAY ============ -->
+  <section class="screen" id="screen-play">
+    <div class="status">
+      <div class="cell">
+        <span class="eyebrow">Briscola</span>
+        <span class="val" id="st-trump"></span>
+      </div>
+      <div class="cell">
+        <span class="eyebrow">Tallone</span>
+        <span class="val" id="st-stock"></span>
+      </div>
+      <div class="cell">
+        <span class="eyebrow" id="st-score-label">Prese</span>
+        <span class="val" id="st-score"></span>
+      </div>
+    </div>
+    <p class="phase-note" id="phase-note"></p>
+
+    <div class="table" id="table-area"></div>
+
+    <div class="hand-area">
+      <div class="hand-label">
+        <span class="eyebrow" id="hand-owner"></span>
+        <span class="eyebrow" id="hand-count"></span>
+      </div>
+      <div class="hand" id="hand"></div>
+      <p class="hint" id="play-hint"></p>
+      <div class="play-cta">
+        <button class="btn" id="btn-play" disabled>Scegli una carta</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TRICK RESULT ============ -->
+  <section class="screen" id="screen-trick">
+    <p class="eyebrow" id="trick-count"></p>
+    <div class="trick-cards" id="trick-cards"></div>
+    <p class="trick-verdict" id="trick-verdict"></p>
+    <p class="note" id="trick-note"></p>
+    <button class="btn" id="btn-next"></button>
+  </section>
+
+  <!-- ============ GAME OVER ============ -->
+  <section class="screen" id="screen-over">
+    <p class="eyebrow">Fine della partita</p>
+    <p class="trick-verdict" id="over-title"></p>
+    <p class="final-score" id="over-score"></p>
+    <p class="match-tally" id="over-tally"></p>
+    <div class="over-actions">
+      <button class="btn" id="btn-rematch">Rivincita</button>
+      <button class="btn-quiet" id="btn-newpair">Cambia giocatori</button>
+    </div>
+  </section>
+
+</main>
+
+<script id="game-ui">
+"use strict";
+(() => {
+  const GW = globalThis.GW;
+  const SAVE_KEY = "german-whist-v1";
+  const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
+  const SUIT_NAME = { S: "Picche", H: "Cuori", D: "Quadri", C: "Fiori" };
+  const RED = { H: true, D: true };
+
+  const $ = (id) => document.getElementById(id);
+
+  let game = null;
+  let names = { A: "", B: "" };
+  let matchWins = { A: 0, B: 0 };
+  let nextFirstLeader = "A";
+  let scored = false;       // guards double-counting matchWins on the over screen
+  let selected = null;
+
+  /* ---------- persistence ---------- */
+
+  function save() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ game, names, matchWins, nextFirstLeader, scored }));
+    } catch (e) { /* private mode: play without saving */ }
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      // Validate the shape: a corrupt or foreign value under this key must
+      // degrade to "no save", never crash the app at startup.
+      if (!s || typeof s !== "object" || !s.names || typeof s.names !== "object") return null;
+      if (s.game && !(s.game.hands && s.game.trick && s.game.taken)) return null;
+      return s;
+    } catch (e) { return null; }
+  }
+
+  /* Idempotent end-of-game bookkeeping: safe to call from renderOver and
+     from startup (covers a game closed on the last trick screen, before
+     the result was ever shown). */
+  function applyResult(g) {
+    if (!g || !g.winner || scored) return;
+    matchWins[g.winner]++;
+    nextFirstLeader = GW.other(g.winner); // loser opens the rematch
+    scored = true;
+    save();
+  }
+
+  function hydrate() {
+    const saved = load();
+    if (!saved) return;
+    game = saved.game || null;
+    names = { A: saved.names.A || "", B: saved.names.B || "" };
+    matchWins = saved.matchWins && typeof saved.matchWins === "object"
+      ? { A: saved.matchWins.A || 0, B: saved.matchWins.B || 0 }
+      : { A: 0, B: 0 };
+    nextFirstLeader = saved.nextFirstLeader === "B" ? "B" : "A";
+    scored = !!saved.scored;
+    applyResult(game);
+  }
+
+  /* ---------- rendering helpers ---------- */
+
+  function nameOf(p) { return names[p] || (p === "A" ? "Giocatore 1" : "Giocatore 2"); }
+
+  function rankLabel(r) {
+    return { 11: "J", 12: "Q", 13: "K", 14: "A" }[r] || String(r);
+  }
+
+  function cardEl(card, opts = {}) {
+    const el = document.createElement("div");
+    const suit = GW.suitOf(card);
+    el.className = "card" + (RED[suit] ? " red" : "") + (opts.big ? " big" : "");
+    const label = rankLabel(GW.rankOf(card));
+    const glyph = SUIT_GLYPH[suit];
+    el.innerHTML =
+      '<span class="corner">' + label + "<br>" + glyph + "</span>" +
+      '<span class="pip">' + glyph + "</span>" +
+      '<span class="corner bottom">' + label + "<br>" + glyph + "</span>";
+    el.setAttribute("aria-label", label + " di " + SUIT_NAME[suit]);
+    return el;
+  }
+
+  function cardBackEl(opts = {}) {
+    const el = document.createElement("div");
+    el.className = "card back" + (opts.big ? " big" : "");
+    el.setAttribute("aria-label", "Carta coperta");
+    return el;
+  }
+
+  function cardText(card) {
+    return rankLabel(GW.rankOf(card)) + SUIT_GLYPH[GW.suitOf(card)];
+  }
+
+  function show(id) {
+    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+    $(id).classList.add("active");
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- setup screen ---------- */
+
+  function renderSetup() {
+    const resumable = !!(game && !game.winner);
+    $("btn-resume").hidden = !resumable;
+    if (resumable) {
+      $("btn-resume").textContent =
+        "Riprendi: " + nameOf("A") + " vs " + nameOf("B") +
+        " (presa " + game.trickNum + ")";
+    }
+    $("name-a").value = names.A;
+    $("name-b").value = names.B;
+    show("screen-setup");
+  }
+
+  function startGame(firstLeader) {
+    const seed = (Math.random() * 0xffffffff) >>> 0;
+    game = GW.newGame(seed, firstLeader);
+    scored = false;
+    selected = null;
+    save();
+    renderPass();
+  }
+
+  /* ---------- pass screen ---------- */
+
+  function renderPass() {
+    const p = game.turn;
+    $("pass-name").textContent = nameOf(p);
+    const lead = game.trick[game.leader];
+    $("pass-note").textContent = lead !== null
+      ? nameOf(game.leader) + " ha giocato: tocca a te rispondere."
+      : "Apri tu la presa n. " + game.trickNum + ".";
+    show("screen-pass");
+  }
+
+  /* ---------- play screen ---------- */
+
+  function renderPlay() {
+    const viewer = game.turn;
+    const ph = GW.phase(game);
+    selected = null;
+
+    $("st-trump").innerHTML =
+      '<span class="' + (RED[game.trump] ? "red" : "brassy") + '">' +
+      SUIT_GLYPH[game.trump] + "</span> " + SUIT_NAME[game.trump];
+    $("st-stock").textContent = game.stock.length;
+    $("st-score-label").textContent = ph === 1 ? "Prese" : "Punti";
+    const t = ph === 1 ? game.taken.p1 : game.taken.p2;
+    $("st-score").textContent = t[viewer] + "–" + t[GW.other(viewer)];
+    $("phase-note").textContent = ph === 1
+      ? "Fase 1 · costruisci la mano — queste prese non danno punti"
+      : "Fase 2 · ogni presa vale un punto";
+
+    // table
+    const table = $("table-area");
+    table.innerHTML = "";
+
+    if (ph === 1) {
+      const stake = document.createElement("div");
+      stake.className = "slot";
+      const wrap = document.createElement("div");
+      wrap.className = "stake-wrap";
+      wrap.appendChild(cardEl(GW.upcard(game), { big: true }));
+      if (game.stock.length > 1) wrap.appendChild(cardBackEl());
+      stake.appendChild(wrap);
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = "In palio per chi prende";
+      stake.appendChild(lbl);
+      table.appendChild(stake);
+    }
+
+    const leadCard = game.trick[game.leader];
+    if (leadCard !== null) {
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      slot.appendChild(cardEl(leadCard, { big: true }));
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = nameOf(game.leader) + " ha giocato";
+      slot.appendChild(lbl);
+      table.appendChild(slot);
+    } else {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Apri tu la presa. " + (ph === 1
+        ? "Vincere ti dà la carta scoperta; perdere, quella coperta."
+        : "Ogni presa ora è un punto.");
+      table.appendChild(note);
+    }
+
+    // hand
+    $("hand-owner").textContent = "Le carte di " + nameOf(viewer);
+    const legal = new Set(GW.legalCards(game, viewer));
+    const hand = GW.sortHand(game.hands[viewer], game.trump);
+    $("hand-count").textContent = hand.length + " carte";
+    const handEl = $("hand");
+    handEl.innerHTML = "";
+    const mustFollow = leadCard !== null && legal.size < hand.length;
+
+    for (const c of hand) {
+      const el = cardEl(c);
+      el.tabIndex = 0;
+      el.dataset.card = c;
+      if (game.justDrawn[viewer] === c) el.classList.add("drawn");
+      if (!legal.has(c)) {
+        el.classList.add("illegal");
+      } else {
+        const pick = () => selectCard(c);
+        el.addEventListener("click", pick);
+        el.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); }
+        });
+      }
+      handEl.appendChild(el);
+    }
+
+    $("play-hint").textContent = mustFollow
+      ? "Devi rispondere a " + SUIT_NAME[GW.suitOf(leadCard)].toLowerCase() + "."
+      : (game.justDrawn[viewer] ? "La carta bordata d'oro è quella appena pescata." : "");
+
+    $("btn-play").disabled = true;
+    $("btn-play").textContent = "Scegli una carta";
+    show("screen-play");
+  }
+
+  function selectCard(card) {
+    selected = card;
+    document.querySelectorAll("#hand .card").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.card === card);
+    });
+    const btn = $("btn-play");
+    btn.disabled = false;
+    btn.textContent = "Gioca " + cardText(card);
+  }
+
+  function confirmPlay() {
+    if (!selected) return;
+    const res = GW.playCard(game, game.turn, selected);
+    selected = null;
+    save();
+    if (res.resolved) renderTrick(res.trick);
+    else renderPass();
+  }
+
+  /* ---------- trick result (public) ---------- */
+
+  function renderTrick(trick) {
+    $("trick-count").textContent = "Presa " + trick.num + " di 26";
+
+    const holder = $("trick-cards");
+    holder.innerHTML = "";
+    for (const p of [trick.leader, GW.other(trick.leader)]) {
+      const slot = document.createElement("div");
+      slot.className = "slot" + (p === trick.winner ? " winner" : "");
+      slot.appendChild(cardEl(trick.cards[p], { big: true }));
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = nameOf(p);
+      slot.appendChild(lbl);
+      holder.appendChild(slot);
+    }
+
+    $("trick-verdict").textContent = "La presa va a " + nameOf(trick.winner);
+    $("trick-note").textContent = trick.phase === 1
+      ? nameOf(trick.winner) + " prende " + cardText(trick.drawnUp) + "; " +
+        nameOf(GW.other(trick.winner)) + " pesca una carta coperta."
+      : "+1 punto per " + nameOf(trick.winner) + ".";
+
+    const btn = $("btn-next");
+    if (game.winner) {
+      btn.textContent = "Vedi il risultato";
+      btn.onclick = renderOver;
+    } else {
+      btn.textContent = "Continua — tocca a " + nameOf(game.turn);
+      btn.onclick = renderPass;
+    }
+    show("screen-trick");
+  }
+
+  /* ---------- game over ---------- */
+
+  function renderOver() {
+    const w = game.winner;
+    const l = GW.other(w);
+    applyResult(game);
+    $("over-title").textContent = "Vince " + nameOf(w);
+    $("over-score").textContent = game.taken.p2[w] + "–" + game.taken.p2[l];
+    $("over-tally").textContent =
+      "Partite vinte · " + nameOf("A") + " " + matchWins.A + " — " + matchWins.B + " " + nameOf("B");
+    show("screen-over");
+  }
+
+  /* ---------- wiring ---------- */
+
+  $("btn-start").addEventListener("click", () => {
+    const a = $("name-a").value.trim().slice(0, 14);
+    const b = $("name-b").value.trim().slice(0, 14);
+    if (a !== names.A || b !== names.B) {
+      // a different pair starts its own match tally
+      matchWins = { A: 0, B: 0 };
+      nextFirstLeader = "A";
+    }
+    names = { A: a, B: b };
+    startGame(nextFirstLeader);
+  });
+
+  $("btn-resume").addEventListener("click", () => {
+    if (!game || game.winner) { renderSetup(); return; }
+    renderPass();
+  });
+
+  $("btn-reveal").addEventListener("click", renderPlay);
+  $("btn-play").addEventListener("click", confirmPlay);
+
+  $("btn-rematch").addEventListener("click", () => startGame(nextFirstLeader));
+
+  $("btn-newpair").addEventListener("click", () => {
+    game = null;
+    names = { A: "", B: "" };
+    matchWins = { A: 0, B: 0 };
+    nextFirstLeader = "A";
+    scored = false;
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+    renderSetup();
+  });
+
+  hydrate();
+  renderSetup();
+})();
+</script>

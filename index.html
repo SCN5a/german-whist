@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>German Whist — Online</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root {
+    --felt-950: #081b16;
+    --felt-900: #0c241e;
+    --felt-800: #123028;
+    --felt-700: #1a4034;
+    --line: rgba(246, 241, 227, 0.10);
+    --ivory: #f6f1e3;
+    --ivory-dim: #e9e0c9;
+    --ink: #20211f;
+    --suit-red: #b3372c;
+    --brass: #d5a44c;
+    --brass-soft: rgba(213, 164, 76, 0.16);
+    --text: #e8e2d0;
+    --muted: #93ac9f;
+    --shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    --radius: 10px;
+    --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    background:
+      radial-gradient(ellipse 120% 80% at 50% -10%, var(--felt-700), transparent 60%),
+      linear-gradient(180deg, var(--felt-800), var(--felt-900) 55%, var(--felt-950));
+    background-attachment: fixed;
+    min-height: 100dvh;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .screen { display: none; flex: 1; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  h1.brand {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: 2.4rem;
+    letter-spacing: 0.02em;
+    color: var(--ivory);
+    text-wrap: balance;
+  }
+  .brand .suits { color: var(--brass); font-size: 1.4rem; letter-spacing: 0.25em; display: block; margin-top: 6px; }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+  }
+
+  button { font-family: var(--sans); border: none; cursor: pointer; touch-action: manipulation; }
+
+  .btn {
+    width: 100%;
+    padding: 15px 20px;
+    border-radius: var(--radius);
+    font-size: 1.05rem;
+    font-weight: 600;
+    background: var(--brass);
+    color: var(--felt-950);
+    box-shadow: var(--shadow);
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  .btn:active { transform: scale(0.985); }
+  .btn:disabled { opacity: 0.35; pointer-events: none; box-shadow: none; }
+
+  .btn-quiet {
+    width: 100%;
+    padding: 13px 20px;
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    font-weight: 500;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+
+  .btn:focus-visible, .btn-quiet:focus-visible, .card:focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+
+  .card {
+    width: 62px;
+    height: 88px;
+    border-radius: 7px;
+    background: linear-gradient(160deg, var(--ivory), var(--ivory-dim));
+    color: var(--ink);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 6px 7px;
+    font-family: var(--serif);
+    flex-shrink: 0;
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .card .corner { font-size: 1rem; line-height: 1.05; font-weight: 600; }
+  .card .corner.bottom { align-self: flex-end; transform: rotate(180deg); }
+  .card .pip { position: absolute; inset: 0; display: grid; place-items: center; font-size: 1.7rem; opacity: 0.85; }
+  .card.red { color: var(--suit-red); }
+
+  .card.back {
+    background: repeating-linear-gradient(45deg, var(--felt-700) 0 5px, var(--felt-800) 5px 10px);
+    border: 1px solid var(--brass-soft);
+    box-shadow: inset 0 0 0 3px rgba(213, 164, 76, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  .card.big { width: 76px; height: 108px; }
+  .card.big .corner { font-size: 1.2rem; }
+  .card.big .pip { font-size: 2.2rem; }
+
+  .status {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 0 12px;
+  }
+  .status .cell {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    text-align: center;
+  }
+  .status .cell .eyebrow { font-size: 0.6rem; display: block; margin-bottom: 2px; }
+  .status .cell .val {
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    color: var(--ivory);
+    font-variant-numeric: tabular-nums;
+  }
+  .status .val .red { color: #e0705f; }
+  .status .val .brassy { color: var(--brass); }
+
+  .conn {
+    display: flex;
+    justify-content: center;
+    padding-bottom: 8px;
+  }
+  .conn .pill {
+    font-size: 0.72rem;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .conn .pill.ok { color: var(--felt-950); background: var(--muted); border-color: transparent; }
+  .conn .pill.warn { color: var(--felt-950); background: var(--brass); border-color: transparent; }
+
+  .turn-banner {
+    text-align: center;
+    font-family: var(--serif);
+    font-size: 1.15rem;
+    color: var(--ivory);
+    padding-bottom: 4px;
+  }
+  .phase-note {
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    padding-bottom: 8px;
+  }
+
+  .table {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 8px 0;
+    min-height: 150px;
+  }
+  .table .slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .table .slot .eyebrow { font-size: 0.62rem; }
+  .stake-wrap { display: flex; gap: 10px; align-items: center; }
+
+  .note {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-align: center;
+    max-width: 34ch;
+  }
+  .note strong { color: var(--brass); font-weight: 600; }
+
+  .hand-area { padding-top: 6px; }
+  .hand-label { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px 8px; }
+  .hand { display: flex; overflow-x: auto; padding: 14px 8px 6px; scrollbar-width: none; }
+  .hand::-webkit-scrollbar { display: none; }
+  .hand .card { margin-left: -22px; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  .hand .card:first-child { margin-left: 0; }
+  .hand .card.selected {
+    transform: translateY(-14px);
+    box-shadow: 0 0 0 2px var(--brass), 0 8px 18px rgba(0, 0, 0, 0.5);
+    z-index: 2;
+  }
+  .hand .card.illegal { filter: brightness(0.5) saturate(0.6); }
+  .hand.frozen .card { filter: saturate(0.75); opacity: 0.9; }
+  .hand .card.drawn::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: 7px;
+    box-shadow: inset 0 0 0 2px var(--brass);
+    pointer-events: none;
+  }
+
+  .play-cta { padding-top: 12px; min-height: 66px; }
+  .hint { text-align: center; font-size: 0.8rem; color: var(--muted); padding-top: 8px; min-height: 1.2em; }
+
+  /* home */
+  #screen-home { justify-content: center; gap: 24px; text-align: center; }
+  .fields { display: flex; flex-direction: column; gap: 12px; text-align: left; }
+  .fields label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 5px; }
+  .fields input {
+    width: 100%;
+    padding: 13px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--ivory);
+    font-size: 1rem;
+    font-family: var(--sans);
+  }
+  .fields input:focus-visible { outline: 2px solid var(--brass); outline-offset: 0; }
+  .fields input.code { text-transform: uppercase; letter-spacing: 0.3em; font-family: var(--serif); font-size: 1.2rem; text-align: center; }
+  .divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 0.75rem; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* waiting */
+  #screen-wait { justify-content: center; align-items: center; gap: 20px; text-align: center; }
+  .room-code {
+    font-family: var(--serif);
+    font-size: 3rem;
+    letter-spacing: 0.28em;
+    color: var(--brass);
+    padding-left: 0.28em; /* balances the letter-spacing trailing gap */
+  }
+
+  /* overlay (trick result) */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 27, 22, 0.88);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: 24px;
+  }
+  .overlay.active { display: flex; }
+  .overlay .panel {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    text-align: center;
+  }
+  .trick-cards { display: flex; gap: 26px; }
+  .trick-cards .slot { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .trick-cards .slot.winner .card { box-shadow: 0 0 0 2px var(--brass), var(--shadow); }
+  .trick-verdict { font-family: var(--serif); font-size: 1.5rem; color: var(--ivory); text-wrap: balance; }
+
+  /* game over */
+  #screen-over { justify-content: center; align-items: center; gap: 18px; text-align: center; }
+  .final-score { font-family: var(--serif); font-size: 3.4rem; color: var(--ivory); font-variant-numeric: tabular-nums; }
+  .match-tally { font-size: 0.9rem; color: var(--muted); }
+  .over-actions { width: 100%; display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<main id="app">
+
+  <!-- ============ HOME ============ -->
+  <section class="screen" id="screen-home">
+    <div>
+      <h1 class="brand">German Whist<span class="suits">♠ ♥ ♦ ♣</span></h1>
+      <p class="note" style="margin: 10px auto 0;">Due telefoni, una partita. Uno crea la stanza, l'altra si unisce col codice.</p>
+    </div>
+
+    <div class="fields">
+      <div>
+        <label for="my-name">Il tuo nome</label>
+        <input id="my-name" type="text" maxlength="14" placeholder="Come ti chiami?" autocomplete="off">
+      </div>
+    </div>
+
+    <button class="btn" id="btn-create">Crea una stanza</button>
+
+    <div class="divider">oppure</div>
+
+    <div class="fields">
+      <div>
+        <label for="join-code">Codice stanza</label>
+        <input id="join-code" class="code" type="text" maxlength="4" placeholder="····" autocomplete="off" autocapitalize="characters">
+      </div>
+    </div>
+    <button class="btn-quiet" id="btn-join">Unisciti alla stanza</button>
+
+    <button class="btn-quiet" id="btn-resume-online" hidden></button>
+    <p class="hint" id="home-error"></p>
+  </section>
+
+  <!-- ============ WAITING ============ -->
+  <section class="screen" id="screen-wait">
+    <p class="eyebrow" id="wait-eyebrow">Codice stanza</p>
+    <p class="room-code" id="room-code"></p>
+    <p class="note" id="wait-note"></p>
+    <button class="btn" id="btn-share" hidden>Manda l'invito</button>
+    <button class="btn-quiet" id="btn-wait-back">Annulla</button>
+  </section>
+
+  <!-- ============ PLAY ============ -->
+  <section class="screen" id="screen-play">
+    <div class="conn"><span class="pill" id="conn-pill"></span></div>
+    <div class="status">
+      <div class="cell">
+        <span class="eyebrow">Briscola</span>
+        <span class="val" id="st-trump"></span>
+      </div>
+      <div class="cell">
+        <span class="eyebrow">Tallone</span>
+        <span class="val" id="st-stock"></span>
+      </div>
+      <div class="cell">
+        <span class="eyebrow" id="st-score-label">Prese</span>
+        <span class="val" id="st-score"></span>
+      </div>
+    </div>
+    <p class="turn-banner" id="turn-banner"></p>
+    <p class="phase-note" id="phase-note"></p>
+
+    <div class="table" id="table-area"></div>
+
+    <div class="hand-area">
+      <div class="hand-label">
+        <span class="eyebrow" id="hand-owner"></span>
+        <span class="eyebrow" id="hand-count"></span>
+      </div>
+      <div class="hand" id="hand"></div>
+      <p class="hint" id="play-hint"></p>
+      <div class="play-cta">
+        <button class="btn" id="btn-play" disabled>Scegli una carta</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ GAME OVER ============ -->
+  <section class="screen" id="screen-over">
+    <p class="eyebrow">Fine della partita</p>
+    <p class="trick-verdict" id="over-title"></p>
+    <p class="final-score" id="over-score"></p>
+    <p class="match-tally" id="over-tally"></p>
+    <div class="over-actions">
+      <button class="btn" id="btn-rematch" hidden>Rivincita</button>
+      <p class="note" id="over-wait" hidden></p>
+      <button class="btn-quiet" id="btn-leave">Esci dalla stanza</button>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ TRICK RESULT OVERLAY ============ -->
+<div class="overlay" id="trick-overlay">
+  <div class="panel">
+    <p class="eyebrow" id="trick-count"></p>
+    <div class="trick-cards" id="trick-cards"></div>
+    <p class="trick-verdict" id="trick-verdict"></p>
+    <p class="note" id="trick-note"></p>
+    <button class="btn" id="btn-trick-ok">Continua</button>
+  </div>
+</div>
+
+<script src="game-logic.js"></script>
+<script src="peerjs.min.js"></script>
+<script>
+"use strict";
+(() => {
+  const GW = globalThis.GW;
+  const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
+  const SUIT_NAME = { S: "Picche", H: "Cuori", D: "Quadri", C: "Fiori" };
+  const RED = { H: true, D: true };
+  const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no O/0, I/1/L
+  const PEER_PREFIX = "gwhist-it-v1-";
+
+  const params = new URLSearchParams(location.search);
+  // test hook: the automated tests run both "phones" as tabs of one browser
+  // profile, which would share localStorage; ?sid= namespaces the keys.
+  const SID = params.get("sid") ? "-" + params.get("sid") : "";
+  const HOST_KEY = "gw-online-host-v1" + SID;
+  const GUEST_KEY = "gw-online-guest-v1" + SID;
+  const TRANSPORT = params.get("t") === "bc" ? "bc" : "peer";
+  // test hook: records every message this page receives (BroadcastChannel runs only)
+  if (TRANSPORT === "bc") globalThis.__received = [];
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ================= session state ================= */
+
+  let role = null;            // 'host' | 'guest'
+  let room = null;
+  let myName = "";
+  let link = null;            // transport handle
+  let connected = false;
+
+  // host-only authoritative state
+  let game = null;
+  let names = { A: "", B: "" };
+  let matchWins = { A: 0, B: 0 };
+  let nextFirstLeader = "A";
+  let scored = false;
+
+  // both sides: last rendered view + interaction state
+  let view = null;
+  let selected = null;
+  let overlayShownFor = 0;    // lastTrick.num already shown to this device
+  let seenFirstView = false;  // first view after page load: sync, don't replay old tricks
+  let lastViewAt = 0;
+
+  /* ================= persistence ================= */
+
+  function saveHost() {
+    try {
+      localStorage.setItem(HOST_KEY, JSON.stringify({ room, myName, game, names, matchWins, nextFirstLeader, scored }));
+    } catch (e) {}
+  }
+  function saveGuest() {
+    try { localStorage.setItem(GUEST_KEY, JSON.stringify({ room, myName })); } catch (e) {}
+  }
+  function loadKey(key) {
+    try {
+      const s = JSON.parse(localStorage.getItem(key));
+      return s && typeof s === "object" ? s : null;
+    } catch (e) { return null; }
+  }
+  function clearSession() {
+    try { localStorage.removeItem(HOST_KEY); localStorage.removeItem(GUEST_KEY); } catch (e) {}
+  }
+
+  /* ================= transports =================
+     link = { send(obj), close() }; callbacks:
+       onUp()        link established (host: guest arrived)
+       onMsg(obj)    message received
+       onDown()      link lost (may come back)
+       onFatal(txt)  unrecoverable (room taken / not found)               */
+
+  function startPeerHost(cb) {
+    const peer = new Peer(PEER_PREFIX + room.toLowerCase());
+    let conn = null;
+    peer.on("open", () => {});
+    peer.on("connection", (c) => {
+      if (conn) { try { conn.close(); } catch (e) {} } // newest connection wins (guest reloaded)
+      conn = c;
+      c.on("open", () => cb.onUp());
+      c.on("data", (d) => cb.onMsg(d));
+      c.on("close", () => { if (conn === c) { conn = null; cb.onDown(); } });
+      c.on("error", () => { if (conn === c) { conn = null; cb.onDown(); } });
+    });
+    peer.on("error", (e) => {
+      if (e.type === "unavailable-id") cb.onFatal("Codice già in uso: creane un altro.");
+      else if (e.type === "network" || e.type === "disconnected") cb.onDown();
+    });
+    peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
+    return {
+      send: (obj) => { if (conn && conn.open) { try { conn.send(obj); } catch (e) {} } },
+      close: () => { try { peer.destroy(); } catch (e) {} },
+    };
+  }
+
+  function startPeerGuest(cb) {
+    const peer = new Peer();
+    let conn = null;
+    peer.on("open", () => {
+      conn = peer.connect(PEER_PREFIX + room.toLowerCase(), { reliable: true, serialization: "json" });
+      conn.on("open", () => cb.onUp());
+      conn.on("data", (d) => cb.onMsg(d));
+      conn.on("close", () => cb.onDown());
+      conn.on("error", () => cb.onDown());
+    });
+    peer.on("error", (e) => {
+      if (e.type === "peer-unavailable") cb.onFatal("Stanza non trovata. Controlla il codice.");
+      else if (e.type === "network" || e.type === "disconnected") cb.onDown();
+    });
+    peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
+    return {
+      send: (obj) => { if (conn && conn.open) { try { conn.send(obj); } catch (e) {} } },
+      close: () => { try { peer.destroy(); } catch (e) {} },
+    };
+  }
+
+  /* BroadcastChannel transport — same-origin only; used by the automated
+     tests to drive two pages without a network. */
+  function startBcTransport(cb) {
+    const me = role;
+    const ch = new BroadcastChannel("gw-room-" + room);
+    let up = false;
+    ch.onmessage = (ev) => {
+      const env = ev.data;
+      if (!env || env.from === me) return;
+      if (env.ctl === "hello" && me === "host") {
+        ch.postMessage({ from: me, ctl: "hi" });
+        if (!up) { up = true; cb.onUp(); }
+        return;
+      }
+      if (env.ctl === "hi" && me === "guest") {
+        if (!up) { up = true; cb.onUp(); }
+        return;
+      }
+      if (env.data !== undefined) {
+        if (globalThis.__received) globalThis.__received.push(env.data);
+        cb.onMsg(env.data);
+      }
+    };
+    if (me === "guest") {
+      const tryHello = setInterval(() => {
+        if (up) { clearInterval(tryHello); return; }
+        ch.postMessage({ from: me, ctl: "hello" });
+      }, 150);
+      ch.postMessage({ from: me, ctl: "hello" });
+    }
+    return {
+      send: (obj) => ch.postMessage({ from: me, data: obj }),
+      close: () => ch.close(),
+    };
+  }
+
+  function startLink(cb) {
+    if (TRANSPORT === "bc") return startBcTransport(cb);
+    return role === "host" ? startPeerHost(cb) : startPeerGuest(cb);
+  }
+
+  /* ================= host: game orchestration ================= */
+
+  function applyResult(g) {
+    if (!g || !g.winner || scored) return;
+    matchWins[g.winner]++;
+    nextFirstLeader = GW.other(g.winner);
+    scored = true;
+    saveHost();
+  }
+
+  function viewFor(p) {
+    return {
+      t: "view",
+      you: p,
+      names: { A: names.A, B: names.B },
+      matchWins: { A: matchWins.A, B: matchWins.B },
+      trump: game.trump,
+      stockCount: game.stock.length,
+      upcard: GW.upcard(game),
+      phase: GW.phase(game),
+      trickNum: game.trickNum,
+      hand: game.hands[p].slice(),
+      justDrawn: game.justDrawn[p],
+      trick: { A: game.trick.A, B: game.trick.B },
+      leader: game.leader,
+      turn: game.turn,
+      taken: game.taken,
+      lastTrick: game.lastTrick,
+      winner: game.winner,
+    };
+  }
+
+  function broadcast() {
+    applyResult(game);
+    saveHost();
+    link.send(viewFor("B"));
+    acceptView(viewFor("A"));
+  }
+
+  function hostStartGame() {
+    const seed = (Math.random() * 0xffffffff) >>> 0;
+    game = GW.newGame(seed, nextFirstLeader);
+    scored = false;
+    overlayShownFor = 0;
+    broadcast();
+  }
+
+  function hostOnMsg(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.t === "join") {
+      names.B = String(msg.name || "").slice(0, 14);
+      if (!game) hostStartGame();
+      else broadcast();       // reconnection: resync the guest
+      return;
+    }
+    if (msg.t === "sync") { if (game) broadcast(); return; }
+    if (msg.t === "play") {
+      if (!game || game.winner) return;
+      if (game.turn !== "B") return;
+      if (!GW.legalCards(game, "B").includes(msg.card)) { broadcast(); return; }
+      GW.playCard(game, "B", msg.card);
+      broadcast();
+      return;
+    }
+  }
+
+  /* ================= guest ================= */
+
+  function guestOnMsg(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.t === "view") acceptView(msg);
+  }
+
+  /* ================= shared rendering ================= */
+
+  function nameIn(v, p) { return v.names[p] || (p === "A" ? "Giocatore 1" : "Giocatore 2"); }
+
+  function rankLabel(r) { return { 11: "J", 12: "Q", 13: "K", 14: "A" }[r] || String(r); }
+
+  function cardEl(card, opts = {}) {
+    const el = document.createElement("div");
+    const suit = GW.suitOf(card);
+    el.className = "card" + (RED[suit] ? " red" : "") + (opts.big ? " big" : "");
+    const label = rankLabel(GW.rankOf(card));
+    const glyph = SUIT_GLYPH[suit];
+    el.innerHTML =
+      '<span class="corner">' + label + "<br>" + glyph + "</span>" +
+      '<span class="pip">' + glyph + "</span>" +
+      '<span class="corner bottom">' + label + "<br>" + glyph + "</span>";
+    el.setAttribute("aria-label", label + " di " + SUIT_NAME[suit]);
+    return el;
+  }
+
+  function cardBackEl() {
+    const el = document.createElement("div");
+    el.className = "card back";
+    el.setAttribute("aria-label", "Carta coperta");
+    return el;
+  }
+
+  function cardText(card) { return rankLabel(GW.rankOf(card)) + SUIT_GLYPH[GW.suitOf(card)]; }
+
+  function show(id) {
+    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+    $(id).classList.add("active");
+    window.scrollTo(0, 0);
+  }
+
+  function setConnPill() {
+    const pill = $("conn-pill");
+    if (connected) { pill.textContent = "Connessi"; pill.className = "pill ok"; }
+    else { pill.textContent = "Riconnessione…"; pill.className = "pill warn"; }
+  }
+
+  /* A fresh view arrived (host renders its own immediately after a move). */
+  function acceptView(v) {
+    view = v;
+    selected = null;
+    lastViewAt = Date.now();
+
+    if (!v.lastTrick) overlayShownFor = 0;   // a new game started (rematch)
+    if (!seenFirstView) {
+      // first view after a page load is a sync: never replay an old trick
+      seenFirstView = true;
+      overlayShownFor = v.lastTrick ? v.lastTrick.num : 0;
+    } else if (v.lastTrick && v.lastTrick.num > overlayShownFor) {
+      showTrickOverlay(v);
+      overlayShownFor = v.lastTrick.num;
+    }
+
+    if (v.winner) renderOver();
+    else renderPlay();
+  }
+
+  function renderPlay() {
+    const v = view;
+    const me = role === "host" ? "A" : "B";
+    const opp = GW.other(me);
+    const myTurn = v.turn === me;
+
+    setConnPill();
+    $("st-trump").innerHTML =
+      '<span class="' + (RED[v.trump] ? "red" : "brassy") + '">' +
+      SUIT_GLYPH[v.trump] + "</span> " + SUIT_NAME[v.trump];
+    $("st-stock").textContent = v.stockCount;
+    $("st-score-label").textContent = v.phase === 1 ? "Prese" : "Punti";
+    const t = v.phase === 1 ? v.taken.p1 : v.taken.p2;
+    $("st-score").textContent = t[me] + "–" + t[opp];
+    $("turn-banner").textContent = myTurn ? "Tocca a te" : "Aspetta " + nameIn(v, opp) + "…";
+    $("phase-note").textContent = v.phase === 1
+      ? "Fase 1 · costruisci la mano — queste prese non danno punti"
+      : "Fase 2 · ogni presa vale un punto";
+
+    const table = $("table-area");
+    table.innerHTML = "";
+
+    if (v.phase === 1 && v.upcard) {
+      const stake = document.createElement("div");
+      stake.className = "slot";
+      const wrap = document.createElement("div");
+      wrap.className = "stake-wrap";
+      wrap.appendChild(cardEl(v.upcard, { big: true }));
+      if (v.stockCount > 1) wrap.appendChild(cardBackEl());
+      stake.appendChild(wrap);
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = "In palio per chi prende";
+      stake.appendChild(lbl);
+      table.appendChild(stake);
+    }
+
+    const oppCard = v.trick[opp];
+    if (oppCard) {
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      slot.appendChild(cardEl(oppCard, { big: true }));
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = nameIn(v, opp) + " ha giocato";
+      slot.appendChild(lbl);
+      table.appendChild(slot);
+    }
+    const myCard = v.trick[me];
+    if (myCard) {
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      slot.appendChild(cardEl(myCard, { big: true }));
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = "La tua carta";
+      slot.appendChild(lbl);
+      table.appendChild(slot);
+    }
+    if (!oppCard && !myCard && myTurn) {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Apri tu la presa. " + (v.phase === 1
+        ? "Vincere ti dà la carta scoperta; perdere, quella coperta."
+        : "Ogni presa ora è un punto.");
+      table.appendChild(note);
+    }
+
+    $("hand-owner").textContent = "Le tue carte";
+    const hand = GW.sortHand(v.hand, v.trump);
+    $("hand-count").textContent = hand.length + " carte";
+
+    // legality computed from the view (host validates authoritatively anyway)
+    let legal = new Set(hand);
+    const leadCard = v.trick[v.leader];
+    if (myTurn && v.leader !== me && leadCard) {
+      const follow = hand.filter((c) => GW.suitOf(c) === GW.suitOf(leadCard));
+      if (follow.length) legal = new Set(follow);
+    }
+
+    const handEl = $("hand");
+    handEl.innerHTML = "";
+    handEl.classList.toggle("frozen", !myTurn);
+    for (const c of hand) {
+      const el = cardEl(c);
+      el.dataset.card = c;
+      if (v.justDrawn === c) el.classList.add("drawn");
+      if (myTurn && legal.has(c)) {
+        el.tabIndex = 0;
+        const pick = () => selectCard(c);
+        el.addEventListener("click", pick);
+        el.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); }
+        });
+      } else if (myTurn) {
+        el.classList.add("illegal");
+      }
+      handEl.appendChild(el);
+    }
+
+    $("play-hint").textContent = myTurn && leadCard && legal.size < hand.length
+      ? "Devi rispondere a " + SUIT_NAME[GW.suitOf(leadCard)].toLowerCase() + "."
+      : (v.justDrawn && hand.includes(v.justDrawn) ? "La carta bordata d'oro è quella appena pescata." : "");
+
+    const btn = $("btn-play");
+    btn.disabled = true;
+    btn.textContent = myTurn ? "Scegli una carta" : "Aspetta il tuo turno";
+    show("screen-play");
+  }
+
+  function selectCard(card) {
+    selected = card;
+    document.querySelectorAll("#hand .card").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.card === card);
+    });
+    const btn = $("btn-play");
+    btn.disabled = false;
+    btn.textContent = "Gioca " + cardText(card);
+  }
+
+  function confirmPlay() {
+    if (!selected || !view) return;
+    const card = selected;
+    selected = null;
+    $("btn-play").disabled = true;
+    if (role === "host") {
+      if (game && game.turn === "A" && GW.legalCards(game, "A").includes(card)) {
+        GW.playCard(game, "A", card);
+        broadcast();
+      }
+    } else {
+      link.send({ t: "play", card });
+    }
+  }
+
+  function showTrickOverlay(v) {
+    const tk = v.lastTrick;
+    const me = role === "host" ? "A" : "B";
+    $("trick-count").textContent = "Presa " + tk.num + " di 26";
+    const holder = $("trick-cards");
+    holder.innerHTML = "";
+    for (const p of [tk.leader, GW.other(tk.leader)]) {
+      const slot = document.createElement("div");
+      slot.className = "slot" + (p === tk.winner ? " winner" : "");
+      slot.appendChild(cardEl(tk.cards[p], { big: true }));
+      const lbl = document.createElement("span");
+      lbl.className = "eyebrow";
+      lbl.textContent = p === me ? "Tu" : nameIn(v, p);
+      slot.appendChild(lbl);
+      holder.appendChild(slot);
+    }
+    $("trick-verdict").textContent = tk.winner === me
+      ? "La presa è tua"
+      : "La presa va a " + nameIn(v, tk.winner);
+    if (tk.phase === 1) {
+      $("trick-note").textContent = tk.winner === me
+        ? "Prendi " + cardText(tk.drawnUp) + "."
+        : (v.justDrawn
+            ? "Peschi " + cardText(v.justDrawn) + " (solo tu la vedi)."
+            : nameIn(v, tk.winner) + " prende " + cardText(tk.drawnUp) + ".");
+    } else {
+      $("trick-note").textContent = "+1 punto per " + (tk.winner === me ? "te" : nameIn(v, tk.winner)) + ".";
+    }
+    $("trick-overlay").classList.add("active");
+  }
+
+  function renderOver() {
+    const v = view;
+    const me = role === "host" ? "A" : "B";
+    const w = v.winner;
+    setConnPill();
+    $("over-title").textContent = w === me ? "Hai vinto!" : "Vince " + nameIn(v, w);
+    $("over-score").textContent = v.taken.p2[w] + "–" + v.taken.p2[GW.other(w)];
+    $("over-tally").textContent =
+      "Partite vinte · " + nameIn(v, "A") + " " + v.matchWins.A + " — " + v.matchWins.B + " " + nameIn(v, "B");
+    const isHost = role === "host";
+    $("btn-rematch").hidden = !isHost;
+    $("over-wait").hidden = isHost;
+    if (!isHost) $("over-wait").textContent = nameIn(v, "A") + " può iniziare la rivincita da questo schermo.";
+    show("screen-over");
+  }
+
+  /* ================= connection flows ================= */
+
+  function linkCallbacks() {
+    return {
+      onUp: () => {
+        connected = true;
+        setConnPill();
+        if (role === "guest") {
+          link.send({ t: "join", name: myName });
+          $("wait-note").textContent = "Connesso! In attesa delle carte…";
+        }
+        // host: waiting screen flips to play when the guest's join triggers broadcast
+      },
+      onMsg: (m) => (role === "host" ? hostOnMsg(m) : guestOnMsg(m)),
+      onDown: () => {
+        connected = false;
+        setConnPill();
+        if (role === "guest") scheduleGuestRetry();
+      },
+      onFatal: (txt) => {
+        connected = false;
+        try { link.close(); } catch (e) {}
+        $("home-error").textContent = txt;
+        show("screen-home");
+      },
+    };
+  }
+
+  let retryTimer = null;
+  function scheduleGuestRetry() {
+    if (retryTimer) return;
+    retryTimer = setInterval(() => {
+      if (connected) { clearInterval(retryTimer); retryTimer = null; return; }
+      try { link.close(); } catch (e) {}
+      link = startLink(linkCallbacks());
+    }, 4000);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && role === "guest" && link) {
+      link.send({ t: "sync" });
+      setTimeout(() => { if (!view || Date.now() - lastViewAt > 6000) scheduleGuestRetry(); }, 6000);
+    }
+  });
+
+  function genCode() {
+    let c = "";
+    const buf = new Uint32Array(4);
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < 4; i++) c += CODE_ALPHABET[buf[i] % CODE_ALPHABET.length];
+    return c;
+  }
+
+  function beginHost(resumed) {
+    role = "host";
+    saveHost();
+    link = startLink(linkCallbacks());
+    $("wait-eyebrow").textContent = "Codice stanza";
+    $("room-code").textContent = room;
+    $("wait-note").textContent = resumed
+      ? "Stanza riaperta. Quando " + (names.B || "l'altro giocatore") + " rientra, la partita riprende da dov'era."
+      : "Fai aprire questo stesso link sull'altro telefono e inserire il codice.";
+    const shareBtn = $("btn-share");
+    if (navigator.share) {
+      shareBtn.hidden = false;
+      shareBtn.onclick = () => {
+        const url = location.origin + location.pathname + "?stanza=" + room;
+        navigator.share({ title: "German Whist", text: "Giochiamo a German Whist? Stanza " + room + " → " + url }).catch(() => {});
+      };
+    }
+    show("screen-wait");
+  }
+
+  function beginGuest() {
+    role = "guest";
+    saveGuest();
+    link = startLink(linkCallbacks());
+    $("wait-eyebrow").textContent = "Stanza " + room;
+    $("room-code").textContent = room;
+    $("wait-note").textContent = "Sto cercando l'altro telefono…";
+    $("btn-share").hidden = true;
+    show("screen-wait");
+  }
+
+  /* ================= wiring ================= */
+
+  $("btn-create").addEventListener("click", () => {
+    myName = $("my-name").value.trim().slice(0, 14);
+    names = { A: myName, B: "" };
+    matchWins = { A: 0, B: 0 };
+    nextFirstLeader = "A";
+    scored = false;
+    game = null;
+    room = genCode();
+    $("home-error").textContent = "";
+    beginHost(false);
+  });
+
+  $("btn-join").addEventListener("click", () => {
+    const code = $("join-code").value.trim().toUpperCase();
+    if (code.length !== 4) { $("home-error").textContent = "Il codice ha 4 caratteri."; return; }
+    myName = $("my-name").value.trim().slice(0, 14);
+    room = code;
+    $("home-error").textContent = "";
+    beginGuest();
+  });
+
+  $("btn-wait-back").addEventListener("click", () => {
+    try { link && link.close(); } catch (e) {}
+    connected = false;
+    if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+    show("screen-home");
+  });
+
+  $("btn-play").addEventListener("click", confirmPlay);
+  $("btn-trick-ok").addEventListener("click", () => $("trick-overlay").classList.remove("active"));
+
+  $("btn-rematch").addEventListener("click", () => { if (role === "host") hostStartGame(); });
+
+  $("btn-leave").addEventListener("click", () => {
+    try { link && link.close(); } catch (e) {}
+    clearSession();
+    location.href = location.pathname;
+  });
+
+  /* ================= boot ================= */
+
+  const savedHost = loadKey(HOST_KEY);
+  const savedGuest = loadKey(GUEST_KEY);
+  const urlRoom = (params.get("stanza") || "").toUpperCase();
+
+  if (urlRoom.length === 4) $("join-code").value = urlRoom;
+
+  if (savedHost && savedHost.room && savedHost.game && !savedHost.game.winner) {
+    const b = $("btn-resume-online");
+    b.hidden = false;
+    b.textContent = "Riapri la stanza " + savedHost.room + " (presa " + savedHost.game.trickNum + ")";
+    b.onclick = () => {
+      room = savedHost.room;
+      myName = savedHost.myName || "";
+      game = savedHost.game;
+      names = savedHost.names || { A: "", B: "" };
+      matchWins = savedHost.matchWins || { A: 0, B: 0 };
+      nextFirstLeader = savedHost.nextFirstLeader === "B" ? "B" : "A";
+      scored = !!savedHost.scored;
+      overlayShownFor = game.lastTrick ? game.lastTrick.num : 0;
+      beginHost(true);
+      acceptView(viewFor("A"));
+    };
+  } else if (savedGuest && savedGuest.room) {
+    const b = $("btn-resume-online");
+    b.hidden = false;
+    b.textContent = "Rientra nella stanza " + savedGuest.room;
+    b.onclick = () => {
+      room = savedGuest.room;
+      myName = savedGuest.myName || "";
+      beginGuest();
+    };
+  }
+  if (savedHost && savedHost.myName) $("my-name").value = savedHost.myName;
+  else if (savedGuest && savedGuest.myName) $("my-name").value = savedGuest.myName;
+
+  show("screen-home");
+})();
+</script>
+</body>
+</html>
