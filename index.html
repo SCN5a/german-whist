@@ -439,7 +439,8 @@ import { schnorr } from "./schnorr.min.js";
   const RELAY_COUNT = 8;      // relays each phone connects to
   const EVENT_KIND = 24478;   // ephemeral range: relays broadcast, don't store
 
-  const BUILD = "v4";
+  const BUILD = "v5";
+  const CHUNK_SIZE = 800;     // some relays cap event size; split big payloads
 
   const params = new URLSearchParams(location.search);
   // test hook: point the signaling layer at a local Nostr relay
@@ -559,10 +560,12 @@ import { schnorr } from "./schnorr.min.js";
     const sockets = new Map();     // url -> WebSocket
     const seenIds = new Set();
     const lastSeq = {};
+    const partial = new Map();     // mid -> {parts, got, n, ts} chunk reassembly
     let seq = 0;
     let closed = false;
     let up = false;
     let lastHeard = 0;
+    let lastReject = "";
 
     function heard() {
       lastHeard = Date.now();
@@ -591,6 +594,12 @@ import { schnorr } from "./schnorr.min.js";
       ws.onmessage = async (ev) => {
         let m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m[0] === "OK" && m[2] === false) {
+          lastReject = String(m[3] || "rifiutato");
+          console.warn("relay rejected event:", url, lastReject);
+          return;
+        }
+        if (m[0] === "NOTICE") { console.warn("relay notice:", url, m[1]); return; }
         if (m[0] !== "EVENT") return;
         const evt = m[2];
         if (!evt || !evt.id || seenIds.has(evt.id)) return;
@@ -599,8 +608,23 @@ import { schnorr } from "./schnorr.min.js";
           const it = seenIds.values();
           for (let i = 0; i < 1500; i++) seenIds.delete(it.next().value);
         }
+        // chunk wrapper: {m: messageId, i: index, n: total, p: cipher piece}
+        let wrap;
+        try { wrap = JSON.parse(evt.content); } catch (e) { return; }
+        if (!wrap || typeof wrap.m !== "string" || !(wrap.n >= 1) || typeof wrap.p !== "string") return;
+        let cipher;
+        if (wrap.n === 1) {
+          cipher = wrap.p;
+        } else {
+          const buf = partial.get(wrap.m) || { parts: [], got: 0, n: wrap.n, ts: Date.now() };
+          if (buf.parts[wrap.i] === undefined) { buf.parts[wrap.i] = wrap.p; buf.got++; }
+          partial.set(wrap.m, buf);
+          if (buf.got < buf.n) return;
+          partial.delete(wrap.m);
+          cipher = buf.parts.join("");
+        }
         let env;
-        try { env = JSON.parse(await decrypt(await keyPromise, evt.content)); } catch (e) { return; }
+        try { env = JSON.parse(await decrypt(await keyPromise, cipher)); } catch (e) { return; }
         if (!env || env.from === myId) return;
         if (env.seq <= (lastSeq[env.from] ?? -1)) return;
         lastSeq[env.from] = env.seq;
@@ -616,10 +640,7 @@ import { schnorr } from "./schnorr.min.js";
     }
     pickRelays().forEach(connect);
 
-    async function publish(data) {
-      if (closed) return;
-      const env = { from: myId, seq: seq++, data };
-      const content = await encrypt(await keyPromise, JSON.stringify(env));
+    async function publishEvent(content) {
       const created_at = Math.floor(Date.now() / 1000);
       const payload = { kind: EVENT_KIND, tags: [["x", topic]], created_at, content, pubkey };
       const idBytes = await sha256(JSON.stringify(
@@ -635,9 +656,25 @@ import { schnorr } from "./schnorr.min.js";
       }
     }
 
+    async function publish(data) {
+      if (closed) return;
+      const env = { from: myId, seq: seq++, data };
+      const cipher = await encrypt(await keyPromise, JSON.stringify(env));
+      const mid = myId + "-" + env.seq;
+      const n = Math.max(1, Math.ceil(cipher.length / CHUNK_SIZE));
+      for (let i = 0; i < n; i++) {
+        await publishEvent(JSON.stringify({
+          m: mid, i, n, p: cipher.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+        }));
+      }
+    }
+
     const presenceTimer = setInterval(() => {
       publish({ t: "hb" });
       if (up && Date.now() - lastHeard > 28000) down();
+      for (const [mid, buf] of partial) {
+        if (Date.now() - buf.ts > 120000) partial.delete(mid);
+      }
     }, 9000);
     publish({ t: "hb" });
 
@@ -654,6 +691,7 @@ import { schnorr } from "./schnorr.min.js";
         for (const ws of sockets.values()) if (ws.readyState === 1) n++;
         return n;
       },
+      rejectReason: () => lastReject,
     };
   }
 
@@ -1090,9 +1128,12 @@ import { schnorr } from "./schnorr.min.js";
         if (!$("screen-wait").classList.contains("active")) return;
         try {
           const open = link && link.relayCount ? link.relayCount() : 0;
-          $("relay-status").textContent = open > 0
+          let txt = open > 0
             ? "Rete di gioco: " + open + " relè attivi"
             : "In attesa della rete di gioco…";
+          const rej = link && link.rejectReason ? link.rejectReason() : "";
+          if (rej) txt += " · un relè ha rifiutato: " + rej;
+          $("relay-status").textContent = txt;
         } catch (e) {}
       }, 2000));
     }
@@ -1108,6 +1149,14 @@ import { schnorr } from "./schnorr.min.js";
       if (role === "guest") link.send({ t: "sync" }); // and pull a fresh view
     }
   });
+
+  /* A single lost message must never strand the guest on "waiting for
+     cards": keep re-asking until the first view lands. */
+  setInterval(() => {
+    if (role === "guest" && connected && !view && link) {
+      link.send({ t: "join", name: myName });
+    }
+  }, 5000);
 
   function genCode() {
     let c = "";
