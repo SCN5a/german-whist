@@ -336,6 +336,7 @@
     <p class="eyebrow" id="wait-eyebrow">Codice stanza</p>
     <p class="room-code" id="room-code"></p>
     <p class="note" id="wait-note"></p>
+    <p class="hint" id="relay-status"></p>
     <button class="btn" id="btn-share" hidden>Manda l'invito</button>
     <button class="btn-quiet" id="btn-wait-back">Annulla</button>
   </section>
@@ -402,16 +403,28 @@
 </div>
 
 <script src="game-logic.js"></script>
-<script src="peerjs.min.js"></script>
-<script>
+<script type="module">
 "use strict";
+import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
 (() => {
   const GW = globalThis.GW;
   const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
   const SUIT_NAME = { S: "Picche", H: "Cuori", D: "Quadri", C: "Fiori" };
   const RED = { H: true, D: true };
   const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no O/0, I/1/L
-  const PEER_PREFIX = "gwhist-it-v1-";
+  const APP_ID = "gwhist-scn5a-v2";
+  /* Best-effort public TURN relay for phones behind symmetric NAT (Open
+     Relay Project). If it's ever gone, ICE simply skips it — Trystero's
+     default STUN servers still cover the common cases. */
+  const TURN_SERVERS = [{
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turns:openrelay.metered.ca:443?transport=tcp",
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  }];
 
   const params = new URLSearchParams(location.search);
   // test hook: the automated tests run both "phones" as tabs of one browser
@@ -432,8 +445,6 @@
   let myName = "";
   let link = null;            // transport handle
   let connected = false;
-  let everConnected = false;  // this session reached the other phone at least once
-  let linkEpoch = 0;          // bumped on every deliberate link change; stale timers self-cancel
   let awaitingView = false;   // a play was sent; ignore further card taps until the next view
 
   // host-only authoritative state
@@ -475,51 +486,38 @@
        onUp()        link established (host: guest arrived)
        onMsg(obj)    message received
        onDown()      link lost (may come back)
-       onFatal(txt)  unrecoverable (room taken / not found)               */
+                                                                          */
 
-  function startPeerHost(cb) {
-    const peer = new Peer(PEER_PREFIX + room.toLowerCase());
-    let conn = null;
-    peer.on("open", () => {});
-    peer.on("connection", (c) => {
-      if (conn) { try { conn.close(); } catch (e) {} } // newest connection wins (guest reloaded)
-      conn = c;
-      c.on("open", () => cb.onUp());
-      c.on("data", (d) => cb.onMsg(d));
-      c.on("close", () => { if (conn === c) { conn = null; cb.onDown(); } });
-      c.on("error", () => { if (conn === c) { conn = null; cb.onDown(); } });
-    });
-    peer.on("error", (e) => {
-      if (e.type === "unavailable-id") cb.onFatal("Codice già in uso: creane un altro.");
-      else if (e.type === "network" || e.type === "disconnected") { try { peer.reconnect(); } catch (err) {} }
-      else if (peer.destroyed) cb.onLinkDead();   // socket-error, server-error, ssl-unavailable, …
-    });
-    peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
-    return {
-      send: (obj) => { if (conn && conn.open) { try { conn.send(obj); } catch (e) {} } },
-      close: () => { try { peer.destroy(); } catch (e) {} },
+  /* Trystero transport: both phones join the same room (namespaced by app
+     id + code) announced on a redundant set of public Nostr relays. Peer
+     discovery keeps running for the life of the room object, so a phone
+     that reloads or drops simply re-appears — no manual retry loop. */
+  function startTrystero(cb) {
+    const roomObj = joinRoom(
+      { appId: APP_ID, password: "gw-" + room.toUpperCase(), turnConfig: TURN_SERVERS },
+      "room-" + room.toUpperCase()
+    );
+    const msg = roomObj.makeAction("m");
+    let peerId = null;
+    roomObj.onPeerJoin = (id) => {
+      if (peerId) return;       // already paired; ignore strays
+      peerId = id;
+      cb.onUp();
     };
-  }
-
-  function startPeerGuest(cb) {
-    const peer = new Peer();
-    let conn = null;
-    peer.on("open", () => {
-      conn = peer.connect(PEER_PREFIX + room.toLowerCase(), { reliable: true, serialization: "json" });
-      conn.on("open", () => cb.onUp());
-      conn.on("data", (d) => cb.onMsg(d));
-      conn.on("close", () => cb.onDown());
-      conn.on("error", () => cb.onDown());
-    });
-    peer.on("error", (e) => {
-      if (e.type === "peer-unavailable") cb.onFatal("Stanza non trovata. Controlla il codice.");
-      else if (e.type === "network" || e.type === "disconnected") { try { peer.reconnect(); } catch (err) {} }
-      else cb.onDown();   // anything else: let the retry loop rebuild the peer
-    });
-    peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) {} });
+    roomObj.onPeerLeave = (id) => {
+      if (id !== peerId) return;
+      peerId = null;
+      cb.onDown();
+    };
+    msg.onMessage = (data, meta) => {
+      if (peerId && meta && meta.peerId !== peerId) return; // only the paired phone
+      cb.onMsg(data);
+    };
     return {
-      send: (obj) => { if (conn && conn.open) { try { conn.send(obj); } catch (e) {} } },
-      close: () => { try { peer.destroy(); } catch (e) {} },
+      send: (obj) => {
+        try { msg.send(obj, peerId ? { target: peerId } : undefined); } catch (e) {}
+      },
+      close: () => { try { roomObj.leave(); } catch (e) {} },
     };
   }
 
@@ -530,11 +528,14 @@
     const ch = new BroadcastChannel("gw-room-" + room);
     let up = false;
     let closed = false;
-    const sayBye = () => { try { ch.postMessage({ from: me, ctl: "bye" }); } catch (e) {} };
+    const sayBye = () => {
+      closed = true;   // a dying page must not answer any further handshakes
+      try { ch.postMessage({ from: me, ctl: "bye" }); } catch (e) {}
+    };
     window.addEventListener("beforeunload", sayBye);
     ch.onmessage = (ev) => {
       const env = ev.data;
-      if (!env || env.from === me) return;
+      if (closed || !env || env.from === me) return;
       if (env.ctl === "hello" && me === "host") {
         ch.postMessage({ from: me, ctl: "hi" });
         if (!up) { up = true; cb.onUp(); }
@@ -547,6 +548,7 @@
       if (env.ctl === "bye") {
         up = false;
         cb.onDown();
+        if (me === "guest") startHello();  // keep knocking until the host is back
         return;
       }
       if (env.data !== undefined) {
@@ -554,13 +556,14 @@
         cb.onMsg(env.data);
       }
     };
-    if (me === "guest") {
+    function startHello() {
       const tryHello = setInterval(() => {
         if (closed || up) { clearInterval(tryHello); return; }
         ch.postMessage({ from: me, ctl: "hello" });
       }, 150);
       ch.postMessage({ from: me, ctl: "hello" });
     }
+    if (me === "guest") startHello();
     return {
       send: (obj) => { if (!closed) { try { ch.postMessage({ from: me, data: obj }); } catch (e) {} } },
       close: () => {
@@ -575,7 +578,7 @@
 
   function startLink(cb) {
     if (TRANSPORT === "bc") return startBcTransport(cb);
-    return role === "host" ? startPeerHost(cb) : startPeerGuest(cb);
+    return startTrystero(cb);
   }
 
   /* ================= host: game orchestration ================= */
@@ -910,70 +913,57 @@
     return {
       onUp: () => {
         connected = true;
-        everConnected = true;
-        stopRetry();
+        stopWaitTimers();
         setConnPill();
         if (role === "guest") {
           link.send({ t: "join", name: myName });
           $("wait-note").textContent = "Connesso! In attesa delle carte…";
+        } else if (game) {
+          broadcast();   // the guest just (re)appeared: resync immediately
         }
-        // host: waiting screen flips to play when the guest's join triggers broadcast
+        // first connection as host: play starts when the guest's join arrives
       },
       onMsg: (m) => (role === "host" ? hostOnMsg(m) : guestOnMsg(m)),
       onDown: () => {
+        // peer discovery keeps running inside the transport; when the other
+        // phone comes back, onUp fires again on its own
         connected = false;
         setConnPill();
-        if (role === "guest") scheduleGuestRetry();
-      },
-      /* The signaling peer was destroyed (broker unreachable, socket error).
-         Rebuild the link after a pause instead of dying silently. */
-      onLinkDead: () => {
-        connected = false;
-        setConnPill();
-        const epoch = linkEpoch;
-        setTimeout(() => {
-          if (epoch !== linkEpoch) return;
-          try { link.close(); } catch (e) {}
-          link = startLink(linkCallbacks());
-        }, 4000);
-      },
-      onFatal: (txt) => {
-        stopRetry();
-        connected = false;
-        // mid-game, "room not found" usually means the host is reloading:
-        // keep retrying instead of dumping the guest to the home screen
-        if (role === "guest" && everConnected) {
-          setConnPill();
-          scheduleGuestRetry();
-          return;
-        }
-        try { link.close(); } catch (e) {}
-        linkEpoch++;
-        $("home-error").textContent = txt;
-        show("screen-home");
       },
     };
   }
 
-  let retryTimer = null;
-  function stopRetry() {
-    if (retryTimer) { clearInterval(retryTimer); retryTimer = null; }
+  /* Waiting-screen feedback: live relay status plus a hint if nothing
+     connects within a reasonable time. */
+  let waitTimers = [];
+  function stopWaitTimers() {
+    for (const t of waitTimers) { clearInterval(t); clearTimeout(t); }
+    waitTimers = [];
   }
-  function scheduleGuestRetry() {
-    if (retryTimer) return;
-    const epoch = linkEpoch;
-    retryTimer = setInterval(() => {
-      if (epoch !== linkEpoch || role !== "guest") { stopRetry(); return; }
-      if (connected) { stopRetry(); return; }
-      try { link.close(); } catch (e) {}
-      link = startLink(linkCallbacks());
-    }, 4000);
+  function startWaitTimers() {
+    stopWaitTimers();
+    $("relay-status").textContent = "";
+    if (TRANSPORT !== "bc") {
+      waitTimers.push(setInterval(() => {
+        if (!$("screen-wait").classList.contains("active")) return;
+        try {
+          const open = Object.values(getRelaySockets())
+            .filter((w) => w && w.readyState === 1).length;
+          $("relay-status").textContent = open > 0
+            ? "Rete di segnalazione: " + open + " relè attivi"
+            : "In attesa della rete di segnalazione…";
+        } catch (e) {}
+      }, 2000));
+    }
+    waitTimers.push(setTimeout(() => {
+      if (!$("screen-wait").classList.contains("active") || connected) return;
+      $("wait-note").textContent += " Ancora niente? Controlla che il codice sia giusto e che l'altro telefono abbia la stanza aperta.";
+    }, 25000));
   }
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && role === "guest" && link) {
       link.send({ t: "sync" });
-      setTimeout(() => { if (!view || Date.now() - lastViewAt > 6000) scheduleGuestRetry(); }, 6000);
     }
   });
 
@@ -987,9 +977,6 @@
 
   function beginHost(resumed) {
     role = "host";
-    linkEpoch++;
-    stopRetry();
-    everConnected = false;
     awaitingView = false;
     saveHost();
     link = startLink(linkCallbacks());
@@ -1007,13 +994,11 @@
       };
     }
     show("screen-wait");
+    startWaitTimers();
   }
 
   function beginGuest() {
     role = "guest";
-    linkEpoch++;
-    stopRetry();
-    everConnected = false;
     awaitingView = false;
     saveGuest();
     link = startLink(linkCallbacks());
@@ -1022,6 +1007,7 @@
     $("wait-note").textContent = "Sto cercando l'altro telefono…";
     $("btn-share").hidden = true;
     show("screen-wait");
+    startWaitTimers();
   }
 
   /* ================= wiring ================= */
@@ -1051,8 +1037,7 @@
     try { link && link.close(); } catch (e) {}
     link = null;
     connected = false;
-    linkEpoch++;
-    stopRetry();
+    stopWaitTimers();
     show("screen-home");
   });
 

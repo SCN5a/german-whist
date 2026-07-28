@@ -2,7 +2,8 @@
 
 Gioco di carte German Whist per due giocatori, ognuno sul proprio telefono.
 Nessun server e nessun account: i due telefoni si parlano direttamente
-(WebRTC via PeerJS); la pagina è servita da GitHub Pages.
+(WebRTC, con segnalazione Trystero su relay Nostr pubblici); la pagina è
+servita da GitHub Pages.
 
 **Gioca:** apri il sito, uno crea la stanza e l'altra si unisce col codice
 di 4 lettere (o col link d'invito condiviso).
@@ -13,7 +14,7 @@ di 4 lettere (o col link d'invito condiviso).
 - `game-logic.js` — logica di gioco pura; sviluppata e testata in un
   workspace separato (regole di presa, obbligo di seme, fasi, 200 partite
   simulate con controllo di invarianti).
-- `peerjs.min.js` — PeerJS 1.5.4 (vendored da npm).
+- `trystero-nostr.min.js` — Trystero 0.25.3, bundle autonomo (esbuild).
 
 ## Regole in breve
 
