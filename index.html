@@ -329,6 +329,7 @@
 
     <button class="btn-quiet" id="btn-resume-online" hidden></button>
     <p class="hint" id="home-error"></p>
+    <p class="hint" id="build-tag"></p>
   </section>
 
   <!-- ============ WAITING ============ -->
@@ -426,7 +427,11 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
     credential: "openrelayproject",
   }];
 
+  const BUILD = "v3";
+
   const params = new URLSearchParams(location.search);
+  // test hook: point the signaling layer at a local Nostr relay
+  const RELAY_OVERRIDE = params.get("relay");
   // test hook: the automated tests run both "phones" as tabs of one browser
   // profile, which would share localStorage; ?sid= namespaces the keys.
   const SID = params.get("sid") ? "-" + params.get("sid") : "";
@@ -494,8 +499,19 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
      that reloads or drops simply re-appears — no manual retry loop. */
   function startTrystero(cb) {
     const roomObj = joinRoom(
-      { appId: APP_ID, password: "gw-" + room.toUpperCase(), turnConfig: TURN_SERVERS },
-      "room-" + room.toUpperCase()
+      {
+        appId: APP_ID,
+        password: "gw-" + room.toUpperCase(),
+        turnConfig: TURN_SERVERS,
+        relayConfig: RELAY_OVERRIDE ? { urls: [RELAY_OVERRIDE] } : undefined,
+      },
+      "room-" + room.toUpperCase(),
+      {
+        onJoinError: (d) => {
+          const err = d && d.error ? String(d.error) : "errore sconosciuto";
+          $("relay-status").textContent = "Problema di connessione: " + err;
+        },
+      }
     );
     const msg = roomObj.makeAction("m");
     let peerId = null;
@@ -1090,6 +1106,7 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
   if (savedHost && savedHost.myName) $("my-name").value = savedHost.myName;
   else if (savedGuest && savedGuest.myName) $("my-name").value = savedGuest.myName;
 
+  $("build-tag").textContent = "build " + BUILD;
   show("screen-home");
 })();
 </script>
