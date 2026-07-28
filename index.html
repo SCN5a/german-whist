@@ -262,31 +262,65 @@
     padding-left: 0.28em; /* balances the letter-spacing trailing gap */
   }
 
-  /* overlay (trick result) */
-  .overlay {
+  .trick-verdict { font-family: var(--serif); font-size: 1.5rem; color: var(--ivory); text-wrap: balance; }
+
+  /* trick resolution on the table: winner's card slides over the loser's */
+  .duel { position: relative; width: 176px; height: 122px; }
+  .duel .dcard { position: absolute; top: 0; transition: transform 0.45s ease, filter 0.45s ease; }
+  .duel .dcard.lose { left: 12px; transform: rotate(-3deg); }
+  .duel .dcard.win { right: 12px; transform: rotate(4deg); z-index: 2; }
+  .duel.resolved .dcard.win { transform: translate(-46px, -10px) rotate(-6deg); }
+  .duel.resolved .dcard.lose { transform: rotate(-2deg) scale(0.96); filter: brightness(0.7); }
+
+  /* fleeting take-notice, no blocking popup */
+  .toast {
+    position: fixed;
+    top: 16%;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 88vw;
+    background: rgba(8, 27, 22, 0.92);
+    border: 1px solid var(--brass-soft);
+    color: var(--ivory);
+    font-family: var(--serif);
+    font-size: 1.05rem;
+    padding: 10px 20px;
+    border-radius: 999px;
+    text-align: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s ease, visibility 0.25s;
+    pointer-events: none;
+    z-index: 20;
+  }
+  .toast.show { opacity: 1; visibility: visible; }
+
+  /* drawn card: enlarged for a beat, then glides down into the hand */
+  #draw-flash {
     position: fixed;
     inset: 0;
-    background: rgba(8, 27, 22, 0.88);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 10;
-    padding: 24px;
-  }
-  .overlay.active { display: flex; }
-  .overlay .panel {
-    width: 100%;
-    max-width: 420px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    text-align: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(8, 27, 22, 0.55);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s ease, visibility 0.25s;
+    pointer-events: none;
+    z-index: 15;
   }
-  .trick-cards { display: flex; gap: 26px; }
-  .trick-cards .slot { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  .trick-cards .slot.winner .card { box-shadow: 0 0 0 2px var(--brass), var(--shadow); }
-  .trick-verdict { font-family: var(--serif); font-size: 1.5rem; color: var(--ivory); text-wrap: balance; }
+  #draw-flash.show { opacity: 1; visibility: visible; }
+  #draw-flash .card {
+    transform: scale(1.3);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+    transition: transform 0.45s ease, opacity 0.45s ease;
+  }
+  #draw-flash.tohand { opacity: 0; }
+  #draw-flash.tohand .card { transform: translateY(36vh) scale(0.55); opacity: 0.15; }
+
+  .hand.presenting { pointer-events: none; }
 
   /* game over */
   #screen-over { justify-content: center; align-items: center; gap: 18px; text-align: center; }
@@ -392,16 +426,8 @@
 
 </main>
 
-<!-- ============ TRICK RESULT OVERLAY ============ -->
-<div class="overlay" id="trick-overlay">
-  <div class="panel">
-    <p class="eyebrow" id="trick-count"></p>
-    <div class="trick-cards" id="trick-cards"></div>
-    <p class="trick-verdict" id="trick-verdict"></p>
-    <p class="note" id="trick-note"></p>
-    <button class="btn" id="btn-trick-ok">Continua</button>
-  </div>
-</div>
+<div class="toast" id="trick-toast"></div>
+<div id="draw-flash"></div>
 
 <script src="game-logic.js"></script>
 <script type="module">
@@ -439,7 +465,7 @@ import { schnorr } from "./schnorr.min.js";
   const RELAY_COUNT = 8;      // relays each phone connects to
   const EVENT_KIND = 24478;   // ephemeral range: relays broadcast, don't store
 
-  const BUILD = "v5";
+  const BUILD = "v6";
   const CHUNK_SIZE = 800;     // some relays cap event size; split big payloads
 
   const params = new URLSearchParams(location.search);
@@ -464,6 +490,15 @@ import { schnorr } from "./schnorr.min.js";
   let link = null;            // transport handle
   let connected = false;
   let awaitingView = false;   // a play was sent; ignore further card taps until the next view
+  let presenting = false;     // a trick presentation is running on this device
+  let pendingView = null;     // freshest view that arrived during a presentation
+
+  const FAST = params.get("fast") === "1";  // test hook: collapse animation holds
+  const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const HOLD = FAST || REDUCED
+    ? { settle: 30, fight: 50, toast: 80, draw: 80, glide: 40 }
+    : { settle: 60, fight: 500, toast: 1000, draw: 1300, glide: 450 };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // host-only authoritative state
   let game = null;
@@ -873,9 +908,6 @@ import { schnorr } from "./schnorr.min.js";
 
   /* A fresh view arrived (host renders its own immediately after a move). */
   function acceptView(v) {
-    view = v;
-    selected = null;
-    awaitingView = false;
     lastViewAt = Date.now();
 
     if (!v.lastTrick) overlayShownFor = 0;   // a new game started (rematch)
@@ -884,13 +916,95 @@ import { schnorr } from "./schnorr.min.js";
       seenFirstView = true;
       overlayShownFor = v.lastTrick ? v.lastTrick.num : 0;
     } else if (v.lastTrick && v.lastTrick.num > overlayShownFor) {
-      showTrickOverlay(v);
       overlayShownFor = v.lastTrick.num;
+      if (presenting) { pendingView = v; return; }
+      presentTrick(v);
+      return;
     }
 
+    if (presenting) { pendingView = v; return; }
+    view = v;
+    selected = null;
+    awaitingView = false;
     if (v.winner) renderOver();
     else renderPlay();
   }
+
+  /* The trick resolves ON the table: the winning card slides over the
+     losing one, the taker's name flashes by, then the drawn card (phase 1)
+     shows enlarged for a beat and glides down into the hand. */
+  async function presentTrick(v) {
+    presenting = true;
+    view = v;
+    selected = null;
+    awaitingView = false;
+    const me = role === "host" ? "A" : "B";
+    const tk = v.lastTrick;
+
+    renderPlay();
+    const handEl = $("hand");
+    if (v.justDrawn) {
+      // the drawn card arrives visually at the end of the sequence
+      const el = handEl.querySelector('[data-card="' + v.justDrawn + '"]');
+      if (el) el.remove();
+    }
+    const takeText = tk.winner === me ? "La presa è tua" : "Presa di " + nameIn(v, tk.winner);
+    $("turn-banner").textContent = takeText;
+    $("play-hint").textContent = "";
+
+    const table = $("table-area");
+    table.innerHTML = "";
+    const duel = document.createElement("div");
+    duel.className = "duel";
+    const loser = GW.other(tk.winner);
+    const wl = document.createElement("div");
+    wl.className = "dcard lose";
+    wl.appendChild(cardEl(tk.cards[loser], { big: true }));
+    const ww = document.createElement("div");
+    ww.className = "dcard win";
+    ww.appendChild(cardEl(tk.cards[tk.winner], { big: true }));
+    duel.append(wl, ww);
+    table.appendChild(duel);
+
+    await sleep(HOLD.settle);
+    duel.classList.add("resolved");
+    await sleep(HOLD.fight);
+    toast(takeText + (tk.phase === 1 && tk.winner !== me && tk.drawnUp
+      ? " · prende " + cardText(tk.drawnUp) : ""));
+    await sleep(HOLD.toast);
+    hideToast();
+    if (tk.phase === 1 && v.justDrawn) await presentDraw(v.justDrawn);
+
+    presenting = false;
+    const next = pendingView;
+    pendingView = null;
+    if (next) { acceptView(next); return; }
+    if (v.winner) renderOver();
+    else renderPlay();
+  }
+
+  async function presentDraw(card) {
+    const flash = $("draw-flash");
+    flash.innerHTML = "";
+    const lbl = document.createElement("p");
+    lbl.className = "eyebrow";
+    lbl.textContent = "Hai pescato";
+    flash.append(lbl, cardEl(card, { big: true }));
+    flash.classList.add("show");
+    await sleep(HOLD.draw);
+    flash.classList.add("tohand");
+    await sleep(HOLD.glide);
+    flash.classList.remove("show", "tohand");
+    flash.innerHTML = "";
+  }
+
+  function toast(text) {
+    const t = $("trick-toast");
+    t.textContent = text;
+    t.classList.add("show");
+    globalThis.__lastToast = text;   // test hook
+  }
+  function hideToast() { $("trick-toast").classList.remove("show"); }
 
   function renderPlay() {
     const v = view;
@@ -975,6 +1089,7 @@ import { schnorr } from "./schnorr.min.js";
     const handEl = $("hand");
     handEl.innerHTML = "";
     handEl.classList.toggle("frozen", !myTurn);
+    handEl.classList.toggle("presenting", presenting);
     for (const c of hand) {
       const el = cardEl(c);
       el.dataset.card = c;
@@ -1038,37 +1153,6 @@ import { schnorr } from "./schnorr.min.js";
         }
       }, 5000);
     }
-  }
-
-  function showTrickOverlay(v) {
-    const tk = v.lastTrick;
-    const me = role === "host" ? "A" : "B";
-    $("trick-count").textContent = "Presa " + tk.num + " di 26";
-    const holder = $("trick-cards");
-    holder.innerHTML = "";
-    for (const p of [tk.leader, GW.other(tk.leader)]) {
-      const slot = document.createElement("div");
-      slot.className = "slot" + (p === tk.winner ? " winner" : "");
-      slot.appendChild(cardEl(tk.cards[p], { big: true }));
-      const lbl = document.createElement("span");
-      lbl.className = "eyebrow";
-      lbl.textContent = p === me ? "Tu" : nameIn(v, p);
-      slot.appendChild(lbl);
-      holder.appendChild(slot);
-    }
-    $("trick-verdict").textContent = tk.winner === me
-      ? "La presa è tua"
-      : "La presa va a " + nameIn(v, tk.winner);
-    if (tk.phase === 1) {
-      $("trick-note").textContent = tk.winner === me
-        ? "Prendi " + cardText(tk.drawnUp) + "."
-        : (v.justDrawn
-            ? "Peschi " + cardText(v.justDrawn) + " (solo tu la vedi)."
-            : nameIn(v, tk.winner) + " prende " + cardText(tk.drawnUp) + ".");
-    } else {
-      $("trick-note").textContent = "+1 punto per " + (tk.winner === me ? "te" : nameIn(v, tk.winner)) + ".";
-    }
-    $("trick-overlay").classList.add("active");
   }
 
   function renderOver() {
@@ -1233,7 +1317,6 @@ import { schnorr } from "./schnorr.min.js";
   });
 
   $("btn-play").addEventListener("click", confirmPlay);
-  $("btn-trick-ok").addEventListener("click", () => $("trick-overlay").classList.remove("active"));
 
   $("btn-rematch").addEventListener("click", () => { if (role === "host") hostStartGame(); });
 
