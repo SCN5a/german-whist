@@ -406,28 +406,40 @@
 <script src="game-logic.js"></script>
 <script type="module">
 "use strict";
-import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
+import { schnorr } from "./schnorr.min.js";
 (() => {
   const GW = globalThis.GW;
   const SUIT_GLYPH = { S: "♠", H: "♥", D: "♦", C: "♣" };
   const SUIT_NAME = { S: "Picche", H: "Cuori", D: "Quadri", C: "Fiori" };
   const RED = { H: true, D: true };
   const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no O/0, I/1/L
-  const APP_ID = "gwhist-scn5a-v2";
-  /* Best-effort public TURN relay for phones behind symmetric NAT (Open
-     Relay Project). If it's ever gone, ICE simply skips it — Trystero's
-     default STUN servers still cover the common cases. */
-  const TURN_SERVERS = [{
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turns:openrelay.metered.ca:443?transport=tcp",
-    ],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  }];
+  /* Public Nostr relays used to carry the (encrypted) game messages.
+     List taken verbatim from @trystero-p2p/nostr 0.25.3 defaultRelayUrls.
+     Both phones pick the same deterministic subset from the room code,
+     publish every message to all of them and dedupe on receipt — one
+     working relay is enough. No direct phone-to-phone channel, so NAT
+     and TURN servers are out of the picture entirely. */
+  const RELAY_HOSTS = [
+    "basspistol.org", "bucket.coracle.social", "chorus.almostmachines.dev",
+    "chorus.pjv.me", "communities.nos.social", "ftp.halifax.rwth-aachen.de/nostr",
+    "hol.is", "hornetstorage.net/relay", "koru.bitcointxoko.org", "nos.lol",
+    "nostr-01.uid.ovh", "nostr-01.yakihonne.com", "nostr-relay.corb.net",
+    "nostr.data.haus", "nostr.islandarea.net", "nostr.sathoarder.com",
+    "nostr.self-determined.de", "nostr.tegila.com.br", "nostr.vulpem.com",
+    "purplerelay.com", "relay-can.zombi.cloudrodion.com", "relay-rpi.edufeed.org",
+    "relay.agorist.space", "relay.angor.io", "relay.artio.inf.unibe.ch",
+    "relay.binaryrobot.com", "relay.damus.io", "relay.froth.zone",
+    "relay.libernet.app", "relay.mostr.pub", "relay.mostro.network",
+    "relay.nostr.place", "relay.nostrdice.com", "relay.notoshi.win",
+    "relay.sigit.io", "relay02.lnfi.network", "relay2.angor.io", "schnorr.me",
+    "slick.mjex.me", "social.amanah.eblessing.co", "staging.yabu.me",
+    "strfry.openhoofd.nl", "strfry.shock.network", "testnet-relay.samt.st",
+    "top.testrelay.top", "x.kojira.io", "yabu.me/v2",
+  ];
+  const RELAY_COUNT = 8;      // relays each phone connects to
+  const EVENT_KIND = 24478;   // ephemeral range: relays broadcast, don't store
 
-  const BUILD = "v3";
+  const BUILD = "v4";
 
   const params = new URLSearchParams(location.search);
   // test hook: point the signaling layer at a local Nostr relay
@@ -493,47 +505,155 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
        onDown()      link lost (may come back)
                                                                           */
 
-  /* Trystero transport: both phones join the same room (namespaced by app
-     id + code) announced on a redundant set of public Nostr relays. Peer
-     discovery keeps running for the life of the room object, so a phone
-     that reloads or drops simply re-appears — no manual retry loop. */
-  function startTrystero(cb) {
-    const roomObj = joinRoom(
-      {
-        appId: APP_ID,
-        password: "gw-" + room.toUpperCase(),
-        turnConfig: TURN_SERVERS,
-        relayConfig: RELAY_OVERRIDE ? { urls: [RELAY_OVERRIDE] } : undefined,
-      },
-      "room-" + room.toUpperCase(),
-      {
-        onJoinError: (d) => {
-          const err = d && d.error ? String(d.error) : "errore sconosciuto";
-          $("relay-status").textContent = "Problema di connessione: " + err;
-        },
+  /* ---- crypto helpers for the relay transport ---- */
+  const te = new TextEncoder();
+  const td = new TextDecoder();
+  const sha256 = async (str) =>
+    new Uint8Array(await crypto.subtle.digest("SHA-256", te.encode(str)));
+  const toHex = (bytes) =>
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  async function deriveKey(secret) {
+    const bits = await sha256("gwhist-key-" + secret);
+    return crypto.subtle.importKey("raw", bits, "AES-GCM", false, ["encrypt", "decrypt"]);
+  }
+  async function encrypt(key, text) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, te.encode(text)));
+    const buf = new Uint8Array(12 + ct.length);
+    buf.set(iv);
+    buf.set(ct, 12);
+    let bin = "";
+    for (const b of buf) bin += String.fromCharCode(b);
+    return btoa(bin);
+  }
+  async function decrypt(key, b64) {
+    const buf = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12));
+    return td.decode(pt);
+  }
+
+  /* Both phones must pick the SAME relays: deterministic shuffle by code. */
+  function pickRelays() {
+    if (RELAY_OVERRIDE) return [RELAY_OVERRIDE];
+    let seed = 0;
+    for (const c of "gw-" + room.toUpperCase()) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+    const rand = GW.mulberry32(seed);
+    const urls = RELAY_HOSTS.map((h) => "wss://" + h);
+    for (let i = urls.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [urls[i], urls[j]] = [urls[j], urls[i]];
+    }
+    return urls.slice(0, RELAY_COUNT);
+  }
+
+  /* Nostr relay transport: every message is an encrypted, signed,
+     ephemeral Nostr event published to all connected relays; receipt is
+     deduped by event id and ordered by a per-sender sequence number.
+     Presence comes from heartbeats — no direct connection ever needed. */
+  function startNostrTransport(cb) {
+    const topic = "gwx4-" + room.toUpperCase();
+    const myId = Math.random().toString(36).slice(2, 10);
+    const keyPromise = deriveKey(topic);
+    const { secretKey, publicKey } = schnorr.keygen();
+    const pubkey = toHex(publicKey);
+    const sockets = new Map();     // url -> WebSocket
+    const seenIds = new Set();
+    const lastSeq = {};
+    let seq = 0;
+    let closed = false;
+    let up = false;
+    let lastHeard = 0;
+
+    function heard() {
+      lastHeard = Date.now();
+      if (!up) {
+        up = true;
+        publish({ t: "hb" });   // answer right away so the other side pairs fast
+        cb.onUp();
       }
-    );
-    const msg = roomObj.makeAction("m");
-    let peerId = null;
-    roomObj.onPeerJoin = (id) => {
-      if (peerId) return;       // already paired; ignore strays
-      peerId = id;
-      cb.onUp();
-    };
-    roomObj.onPeerLeave = (id) => {
-      if (id !== peerId) return;
-      peerId = null;
-      cb.onDown();
-    };
-    msg.onMessage = (data, meta) => {
-      if (peerId && meta && meta.peerId !== peerId) return; // only the paired phone
-      cb.onMsg(data);
-    };
+    }
+    function down() {
+      if (up) { up = false; cb.onDown(); }
+    }
+
+    function connect(url) {
+      if (closed) return;
+      let ws;
+      try { ws = new WebSocket(url); } catch (e) { return; }
+      sockets.set(url, ws);
+      ws.onopen = () => {
+        ws.send(JSON.stringify(["REQ", "gw-" + myId, {
+          kinds: [EVENT_KIND],
+          "#x": [topic],
+          since: Math.floor(Date.now() / 1000) - 30,
+        }]));
+      };
+      ws.onmessage = async (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m[0] !== "EVENT") return;
+        const evt = m[2];
+        if (!evt || !evt.id || seenIds.has(evt.id)) return;
+        seenIds.add(evt.id);
+        if (seenIds.size > 3000) {
+          const it = seenIds.values();
+          for (let i = 0; i < 1500; i++) seenIds.delete(it.next().value);
+        }
+        let env;
+        try { env = JSON.parse(await decrypt(await keyPromise, evt.content)); } catch (e) { return; }
+        if (!env || env.from === myId) return;
+        if (env.seq <= (lastSeq[env.from] ?? -1)) return;
+        lastSeq[env.from] = env.seq;
+        heard();
+        if (!env.data || env.data.t === "hb") return;
+        cb.onMsg(env.data);
+      };
+      ws.onclose = () => {
+        sockets.delete(url);
+        if (!closed) setTimeout(() => connect(url), 3000 + Math.random() * 2000);
+      };
+      ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    }
+    pickRelays().forEach(connect);
+
+    async function publish(data) {
+      if (closed) return;
+      const env = { from: myId, seq: seq++, data };
+      const content = await encrypt(await keyPromise, JSON.stringify(env));
+      const created_at = Math.floor(Date.now() / 1000);
+      const payload = { kind: EVENT_KIND, tags: [["x", topic]], created_at, content, pubkey };
+      const idBytes = await sha256(JSON.stringify(
+        [0, payload.pubkey, created_at, payload.kind, payload.tags, content]
+      ));
+      const signed = JSON.stringify(["EVENT", {
+        ...payload,
+        id: toHex(idBytes),
+        sig: toHex(await schnorr.signAsync(idBytes, secretKey)),
+      }]);
+      for (const ws of sockets.values()) {
+        if (ws.readyState === 1) { try { ws.send(signed); } catch (e) {} }
+      }
+    }
+
+    const presenceTimer = setInterval(() => {
+      publish({ t: "hb" });
+      if (up && Date.now() - lastHeard > 28000) down();
+    }, 9000);
+    publish({ t: "hb" });
+
     return {
-      send: (obj) => {
-        try { msg.send(obj, peerId ? { target: peerId } : undefined); } catch (e) {}
+      send: (obj) => { publish(obj); },
+      close: () => {
+        closed = true;
+        clearInterval(presenceTimer);
+        for (const ws of sockets.values()) { try { ws.close(); } catch (e) {} }
+        sockets.clear();
       },
-      close: () => { try { roomObj.leave(); } catch (e) {} },
+      relayCount: () => {
+        let n = 0;
+        for (const ws of sockets.values()) if (ws.readyState === 1) n++;
+        return n;
+      },
     };
   }
 
@@ -594,7 +714,7 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
 
   function startLink(cb) {
     if (TRANSPORT === "bc") return startBcTransport(cb);
-    return startTrystero(cb);
+    return startNostrTransport(cb);
   }
 
   /* ================= host: game orchestration ================= */
@@ -871,8 +991,14 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
       }
     } else {
       link.send({ t: "play", card, trick: trickNum });
-      // safety valve: if the confirming view never arrives, unfreeze the hand
-      setTimeout(() => { awaitingView = false; }, 5000);
+      // safety valve: if the confirming view never arrives, unfreeze the
+      // hand and ask the host for a fresh view
+      setTimeout(() => {
+        if (awaitingView) {
+          awaitingView = false;
+          link.send({ t: "sync" });
+        }
+      }, 5000);
     }
   }
 
@@ -963,11 +1089,10 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
       waitTimers.push(setInterval(() => {
         if (!$("screen-wait").classList.contains("active")) return;
         try {
-          const open = Object.values(getRelaySockets())
-            .filter((w) => w && w.readyState === 1).length;
+          const open = link && link.relayCount ? link.relayCount() : 0;
           $("relay-status").textContent = open > 0
-            ? "Rete di segnalazione: " + open + " relè attivi"
-            : "In attesa della rete di segnalazione…";
+            ? "Rete di gioco: " + open + " relè attivi"
+            : "In attesa della rete di gioco…";
         } catch (e) {}
       }, 2000));
     }
@@ -978,8 +1103,9 @@ import { joinRoom, getRelaySockets } from "./trystero-nostr.min.js";
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && role === "guest" && link) {
-      link.send({ t: "sync" });
+    if (document.visibilityState === "visible" && link) {
+      link.send({ t: "hb" });                       // re-announce presence fast
+      if (role === "guest") link.send({ t: "sync" }); // and pull a fresh view
     }
   });
 
