@@ -186,19 +186,84 @@
     padding-bottom: 8px;
   }
 
-  .table {
+  /* opponent's hand: face-down minis across the top, like a real table */
+  .opp-row {
+    display: flex;
+    justify-content: center;
+    padding: 2px 0 4px;
+    min-height: 48px;
+  }
+  .opp-row .mini {
+    width: 30px;
+    height: 44px;
+    border-radius: 4px;
+    margin-left: -13px;
+    background: repeating-linear-gradient(45deg, var(--felt-700) 0 4px, var(--felt-800) 4px 8px);
+    border: 1px solid var(--brass-soft);
+    box-shadow: inset 0 0 0 2px rgba(213, 164, 76, 0.15), 0 1px 3px rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
+  }
+  .opp-row .mini:first-child { margin-left: 0; }
+
+  .board {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 250px;
+  }
+  .stock-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 92px;
+    flex-shrink: 0;
+  }
+  .stock-zone .eyebrow { font-size: 0.58rem; }
+  .pile { position: relative; }
+  .pile-count {
+    position: absolute;
+    right: -9px;
+    bottom: -9px;
+    background: var(--brass);
+    color: var(--felt-950);
+    font-weight: 700;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    border-radius: 999px;
+    padding: 2px 8px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+  }
+  .upcard-spot { min-height: 88px; display: flex; align-items: center; }
+  .slots {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 14px;
-    padding: 8px 0;
-    min-height: 150px;
+    gap: 16px;
   }
-  .table .slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  .table .slot .eyebrow { font-size: 0.62rem; }
-  .stake-wrap { display: flex; gap: 10px; align-items: center; }
+  .slot-ghost {
+    width: 76px;
+    height: 108px;
+    border-radius: 8px;
+    border: 1.5px dashed rgba(246, 241, 227, 0.16);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .board-spacer { width: 46px; flex-shrink: 0; }
+
+  /* cards in flight between zones */
+  .flyer {
+    position: fixed;
+    z-index: 30;
+    pointer-events: none;
+    transform-origin: top left;
+    will-change: transform, opacity;
+  }
+  .upcard-spot .card.pop { animation: popin 0.3s ease; }
+  @keyframes popin { from { transform: rotateY(88deg); } to { transform: none; } }
 
   .note {
     font-size: 0.85rem;
@@ -264,18 +329,10 @@
 
   .trick-verdict { font-family: var(--serif); font-size: 1.5rem; color: var(--ivory); text-wrap: balance; }
 
-  /* trick resolution on the table: winner's card slides over the loser's */
-  .duel { position: relative; width: 176px; height: 122px; }
-  .duel .dcard { position: absolute; top: 0; transition: transform 0.45s ease, filter 0.45s ease; }
-  .duel .dcard.lose { left: 12px; transform: rotate(-3deg); }
-  .duel .dcard.win { right: 12px; transform: rotate(4deg); z-index: 2; }
-  .duel.resolved .dcard.win { transform: translate(-46px, -10px) rotate(-6deg); }
-  .duel.resolved .dcard.lose { transform: rotate(-2deg) scale(0.96); filter: brightness(0.7); }
-
   /* fleeting take-notice, no blocking popup */
   .toast {
     position: fixed;
-    top: 16%;
+    top: 36%;
     left: 50%;
     transform: translateX(-50%);
     max-width: 88vw;
@@ -396,7 +453,20 @@
     <p class="turn-banner" id="turn-banner"></p>
     <p class="phase-note" id="phase-note"></p>
 
-    <div class="table" id="table-area"></div>
+    <div class="opp-row" id="opp-row"></div>
+
+    <div class="board">
+      <div class="stock-zone" id="stock-zone">
+        <div class="card back pile" id="stock-pile"><span class="pile-count" id="pile-count"></span></div>
+        <div class="upcard-spot" id="upcard-spot"></div>
+        <span class="eyebrow">In palio</span>
+      </div>
+      <div class="slots">
+        <div class="slot-ghost" id="slot-opp"></div>
+        <div class="slot-ghost" id="slot-me"></div>
+      </div>
+      <div class="board-spacer"></div>
+    </div>
 
     <div class="hand-area">
       <div class="hand-label">
@@ -465,7 +535,7 @@ import { schnorr } from "./schnorr.min.js";
   const RELAY_COUNT = 8;      // relays each phone connects to
   const EVENT_KIND = 24478;   // ephemeral range: relays broadcast, don't store
 
-  const BUILD = "v6";
+  const BUILD = "v7";
   const CHUNK_SIZE = 800;     // some relays cap event size; split big payloads
 
   const params = new URLSearchParams(location.search);
@@ -492,13 +562,23 @@ import { schnorr } from "./schnorr.min.js";
   let awaitingView = false;   // a play was sent; ignore further card taps until the next view
   let presenting = false;     // a trick presentation is running on this device
   let pendingView = null;     // freshest view that arrived during a presentation
+  let prevView = null;        // last fully rendered view (for animation diffs)
+  let popUpcard = false;      // flip-in the fresh upcard on the next render
 
   const FAST = params.get("fast") === "1";  // test hook: collapse animation holds
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const HOLD = FAST || REDUCED
-    ? { settle: 30, fight: 50, toast: 80, draw: 80, glide: 40 }
-    : { settle: 60, fight: 500, toast: 1000, draw: 1300, glide: 450 };
+    ? { beat: 50, fly: 40, toast: 80, draw: 80, glide: 40 }
+    : { beat: 550, fly: 420, toast: 900, draw: 1200, glide: 450 };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  /* Double-rAF with a timeout fallback: hidden/background pages produce no
+     frames, and the animation pipeline must never hang on one. */
+  const raf = () => new Promise((r) => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; r(); } };
+    requestAnimationFrame(() => requestAnimationFrame(fin));
+    setTimeout(fin, 60);
+  });
 
   // host-only authoritative state
   let game = null;
@@ -906,6 +986,60 @@ import { schnorr } from "./schnorr.min.js";
     else { pill.textContent = "Riconnessione…"; pill.className = "pill warn"; }
   }
 
+  /* ---------- card flight helpers (FLIP-style clones between zones) ---------- */
+
+  const BIG_W = 76, BIG_H = 108;
+  const rectOf = (el) => el.getBoundingClientRect();
+
+  function makeFlyer(node, r) {
+    const f = document.createElement("div");
+    f.className = "flyer";
+    f.style.left = r.left + "px";
+    f.style.top = r.top + "px";
+    f.appendChild(node);
+    document.body.appendChild(f);
+    return f;
+  }
+
+  /* Fly a card node from one rect to (the center of) another. */
+  async function flyNode(node, fromR, toR, dur, opts = {}) {
+    const f = makeFlyer(node, fromR);
+    const w = opts.width || fromR.width;
+    const dx = toR.left + (toR.width - w) / 2 - fromR.left;
+    const dy = toR.top + (toR.height - (opts.height || fromR.height)) / 2 - fromR.top;
+    f.style.transition = "transform " + dur + "ms cubic-bezier(.35,.1,.25,1), opacity " + dur + "ms ease";
+    await raf();
+    f.style.transform = "translate(" + dx + "px," + dy + "px)" + (opts.zoom ? " scale(" + opts.zoom + ")" : "");
+    if (opts.fade) f.style.opacity = "0";
+    await sleep(dur + 30);
+    f.remove();
+  }
+
+  /* Fly + flip: leaves as a card back, lands face-up (swap happens edge-on). */
+  async function flyFlip(backNode, faceNode, fromR, toR, dur) {
+    const f = makeFlyer(backNode, fromR);
+    const dx = toR.left + (toR.width - BIG_W) / 2 - fromR.left;
+    const dy = toR.top + (toR.height - BIG_H) / 2 - fromR.top;
+    f.style.transition = "transform " + (dur / 2) + "ms ease-in";
+    await raf();
+    f.style.transform = "translate(" + dx / 2 + "px," + dy / 2 + "px) rotateY(88deg)";
+    await sleep(dur / 2);
+    f.innerHTML = "";
+    f.appendChild(faceNode);
+    f.style.transition = "transform " + (dur / 2) + "ms ease-out";
+    f.style.transform = "translate(" + dx + "px," + dy + "px) rotateY(0deg)";
+    await sleep(dur / 2 + 30);
+    f.remove();
+  }
+
+  function fillSlot(id, card) {
+    const s = $(id);
+    s.innerHTML = "";
+    if (card) s.appendChild(cardEl(card, { big: true }));
+  }
+
+  /* ---------- view pipeline ---------- */
+
   /* A fresh view arrived (host renders its own immediately after a move). */
   function acceptView(v) {
     lastViewAt = Date.now();
@@ -915,72 +1049,114 @@ import { schnorr } from "./schnorr.min.js";
       // first view after a page load is a sync: never replay an old trick
       seenFirstView = true;
       overlayShownFor = v.lastTrick ? v.lastTrick.num : 0;
-    } else if (v.lastTrick && v.lastTrick.num > overlayShownFor) {
-      overlayShownFor = v.lastTrick.num;
-      if (presenting) { pendingView = v; return; }
-      presentTrick(v);
-      return;
+      prevView = null;
     }
-
     if (presenting) { pendingView = v; return; }
-    view = v;
-    selected = null;
-    awaitingView = false;
-    if (v.winner) renderOver();
-    else renderPlay();
+    const newTrick = !!(v.lastTrick && v.lastTrick.num > overlayShownFor);
+    if (newTrick) overlayShownFor = v.lastTrick.num;
+    runPresentation(v, newTrick);
   }
 
-  /* The trick resolves ON the table: the winning card slides over the
-     losing one, the taker's name flashes by, then the drawn card (phase 1)
-     shows enlarged for a beat and glides down into the hand. */
-  async function presentTrick(v) {
+  async function runPresentation(v, newTrick) {
     presenting = true;
+    const p = prevView;
+    const me = role === "host" ? "A" : "B";
+    const opp = GW.other(me);
     view = v;
     selected = null;
     awaitingView = false;
-    const me = role === "host" ? "A" : "B";
-    const tk = v.lastTrick;
 
-    renderPlay();
-    const handEl = $("hand");
-    if (v.justDrawn) {
-      // the drawn card arrives visually at the end of the sequence
-      const el = handEl.querySelector('[data-card="' + v.justDrawn + '"]');
-      if (el) el.remove();
+    const onTable = $("screen-play").classList.contains("active");
+    if (onTable && p && !p.winner) {
+      if (newTrick) {
+        await animTrickSequence(v, p);
+      } else if (v.trick[opp] && !p.trick[opp]) {
+        // the opponent led: a back flies down from their row and flips over
+        await animOppPlay(v.trick[opp]);
+      }
     }
-    const takeText = tk.winner === me ? "La presa è tua" : "Presa di " + nameIn(v, tk.winner);
-    $("turn-banner").textContent = takeText;
-    $("play-hint").textContent = "";
 
-    const table = $("table-area");
-    table.innerHTML = "";
-    const duel = document.createElement("div");
-    duel.className = "duel";
-    const loser = GW.other(tk.winner);
-    const wl = document.createElement("div");
-    wl.className = "dcard lose";
-    wl.appendChild(cardEl(tk.cards[loser], { big: true }));
-    const ww = document.createElement("div");
-    ww.className = "dcard win";
-    ww.appendChild(cardEl(tk.cards[tk.winner], { big: true }));
-    duel.append(wl, ww);
-    table.appendChild(duel);
-
-    await sleep(HOLD.settle);
-    duel.classList.add("resolved");
-    await sleep(HOLD.fight);
-    toast(takeText + (tk.phase === 1 && tk.winner !== me && tk.drawnUp
-      ? " · prende " + cardText(tk.drawnUp) : ""));
-    await sleep(HOLD.toast);
-    hideToast();
-    if (tk.phase === 1 && v.justDrawn) await presentDraw(v.justDrawn);
-
+    prevView = v;
     presenting = false;
     const next = pendingView;
     pendingView = null;
     if (next) { acceptView(next); return; }
     if (v.winner) renderOver();
     else renderPlay();
+  }
+
+  async function animOppPlay(card) {
+    const row = $("opp-row");
+    const src = row.lastElementChild || row;
+    const fromR = rectOf(src);
+    if (src !== row) src.style.visibility = "hidden";
+    const back = cardBackEl();
+    back.classList.add("big");
+    await flyFlip(back, cardEl(card, { big: true }), fromR, rectOf($("slot-opp")), HOLD.fly * 2);
+    fillSlot("slot-opp", card);
+  }
+
+  async function animTrickSequence(v, p) {
+    const me = role === "host" ? "A" : "B";
+    const opp = GW.other(me);
+    const tk = v.lastTrick;
+    const takeText = tk.winner === me ? "La presa è tua" : "Presa di " + nameIn(v, tk.winner);
+    $("turn-banner").textContent = takeText;
+    $("play-hint").textContent = "";
+    $("hand").classList.add("presenting");
+
+    // make sure both trick cards are on the table before resolving
+    if (!p.trick[opp] && tk.cards[opp]) await animOppPlay(tk.cards[opp]);
+    if (!$("slot-me").firstElementChild && tk.cards[me]) fillSlot("slot-me", tk.cards[me]);
+    if (!$("slot-opp").firstElementChild && tk.cards[opp]) fillSlot("slot-opp", tk.cards[opp]);
+
+    await sleep(HOLD.beat);
+    toast(takeText + (tk.phase === 1 && tk.winner !== me && tk.drawnUp
+      ? " · prende " + cardText(tk.drawnUp) : ""));
+
+    // both cards fly toward whoever took the trick
+    const targetR = rectOf(tk.winner === me ? $("hand") : $("opp-row"));
+    const jobs = [];
+    for (const [slotId, pl] of [["slot-opp", opp], ["slot-me", me]]) {
+      const node = $(slotId).firstElementChild;
+      if (!node || !tk.cards[pl]) continue;
+      const fromR = rectOf(node);
+      $(slotId).innerHTML = "";
+      jobs.push(flyNode(cardEl(tk.cards[pl], { big: true }), fromR, targetR, HOLD.fly, { fade: true, zoom: 0.5 }));
+    }
+    await Promise.all(jobs);
+
+    if (tk.phase === 1) await animDraws(v, tk);
+    await sleep(Math.max(0, HOLD.toast - HOLD.fly));
+    hideToast();
+    popUpcard = true;
+  }
+
+  async function animDraws(v, tk) {
+    const me = role === "host" ? "A" : "B";
+    const winner = tk.winner;
+    const loser = GW.other(winner);
+    const handR = rectOf($("hand"));
+    const oppR = rectOf($("opp-row"));
+
+    // the face-up prize goes to the trick winner
+    const upNode = $("upcard-spot").firstElementChild;
+    if (upNode && tk.drawnUp) {
+      const fromR = rectOf(upNode);
+      $("upcard-spot").innerHTML = "";
+      await flyNode(cardEl(tk.drawnUp), fromR, winner === me ? handR : oppR,
+        HOLD.fly, winner === me ? { zoom: 1.15 } : { fade: true, zoom: 0.5 });
+    }
+
+    // the face-down card goes to the loser
+    const pileR = rectOf($("stock-pile"));
+    const back = cardBackEl();
+    if (loser === me) {
+      await flyNode(back, pileR, rectOf($("slot-me")), HOLD.fly);
+      if (v.justDrawn) await presentDraw(v.justDrawn);   // enlarged reveal, then glides into the hand
+    } else {
+      await flyNode(back, pileR, oppR, HOLD.fly, { fade: true, zoom: 0.5 });
+    }
   }
 
   async function presentDraw(card) {
@@ -1025,54 +1201,29 @@ import { schnorr } from "./schnorr.min.js";
       ? "Fase 1 · costruisci la mano — queste prese non danno punti"
       : "Fase 2 · ogni presa vale un punto";
 
-    const table = $("table-area");
-    table.innerHTML = "";
+    // opponent's face-down hand across the top (count is public knowledge)
+    const oppCount = Math.max(0,
+      v.hand.length + (v.trick[me] ? 1 : 0) - (v.trick[opp] ? 1 : 0));
+    const row = $("opp-row");
+    row.innerHTML = "";
+    for (let i = 0; i < oppCount; i++) {
+      const m = document.createElement("div");
+      m.className = "mini";
+      row.appendChild(m);
+    }
 
+    // stock + face-up prize on the left, play slots center
+    $("stock-zone").style.visibility = v.phase === 1 ? "visible" : "hidden";
+    $("pile-count").textContent = v.stockCount;
+    const spot = $("upcard-spot");
+    spot.innerHTML = "";
     if (v.phase === 1 && v.upcard) {
-      const stake = document.createElement("div");
-      stake.className = "slot";
-      const wrap = document.createElement("div");
-      wrap.className = "stake-wrap";
-      wrap.appendChild(cardEl(v.upcard, { big: true }));
-      if (v.stockCount > 1) wrap.appendChild(cardBackEl());
-      stake.appendChild(wrap);
-      const lbl = document.createElement("span");
-      lbl.className = "eyebrow";
-      lbl.textContent = "In palio per chi prende";
-      stake.appendChild(lbl);
-      table.appendChild(stake);
+      const up = cardEl(v.upcard);
+      if (popUpcard) { up.classList.add("pop"); popUpcard = false; }
+      spot.appendChild(up);
     }
-
-    const oppCard = v.trick[opp];
-    if (oppCard) {
-      const slot = document.createElement("div");
-      slot.className = "slot";
-      slot.appendChild(cardEl(oppCard, { big: true }));
-      const lbl = document.createElement("span");
-      lbl.className = "eyebrow";
-      lbl.textContent = nameIn(v, opp) + " ha giocato";
-      slot.appendChild(lbl);
-      table.appendChild(slot);
-    }
-    const myCard = v.trick[me];
-    if (myCard) {
-      const slot = document.createElement("div");
-      slot.className = "slot";
-      slot.appendChild(cardEl(myCard, { big: true }));
-      const lbl = document.createElement("span");
-      lbl.className = "eyebrow";
-      lbl.textContent = "La tua carta";
-      slot.appendChild(lbl);
-      table.appendChild(slot);
-    }
-    if (!oppCard && !myCard && myTurn) {
-      const note = document.createElement("p");
-      note.className = "note";
-      note.textContent = "Apri tu la presa. " + (v.phase === 1
-        ? "Vincere ti dà la carta scoperta; perdere, quella coperta."
-        : "Ogni presa ora è un punto.");
-      table.appendChild(note);
-    }
+    fillSlot("slot-opp", v.trick[opp]);
+    fillSlot("slot-me", v.trick[me]);
 
     $("hand-owner").textContent = "Le tue carte";
     const hand = GW.sortHand(v.hand, v.trump);
@@ -1128,13 +1279,29 @@ import { schnorr } from "./schnorr.min.js";
     btn.textContent = "Gioca " + cardText(card);
   }
 
-  function confirmPlay() {
-    if (!selected || !view || awaitingView) return;
+  async function confirmPlay() {
+    if (!selected || !view || awaitingView || presenting) return;
     const card = selected;
     const trickNum = view.trickNum;
     selected = null;
     awaitingView = true;
     $("btn-play").disabled = true;
+    $("btn-play").textContent = "Aspetta il tuo turno";
+    const opp = GW.other(role === "host" ? "A" : "B");
+    $("turn-banner").textContent = "Aspetta " + nameIn(view, opp) + "…";
+    $("play-hint").textContent = "";
+
+    // the card flies from the hand to its slot before the move is dispatched
+    presenting = true;
+    const src = $("hand").querySelector('[data-card="' + card + '"]');
+    if (src) {
+      const fromR = rectOf(src);
+      src.style.visibility = "hidden";
+      await flyNode(cardEl(card), fromR, rectOf($("slot-me")), HOLD.fly, { zoom: BIG_W / 62 });
+      fillSlot("slot-me", card);
+    }
+    presenting = false;
+
     if (role === "host") {
       if (game && game.turn === "A" && GW.legalCards(game, "A").includes(card)) {
         GW.playCard(game, "A", card);
@@ -1152,6 +1319,12 @@ import { schnorr } from "./schnorr.min.js";
           link.send({ t: "sync" });
         }
       }, 5000);
+    }
+    // a view that arrived during the flight renders now
+    if (pendingView) {
+      const next = pendingView;
+      pendingView = null;
+      acceptView(next);
     }
   }
 
